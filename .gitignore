@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+.venv
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# MATLAB/Simulink Temporary & Generated Files
+*.asv
+*.m~
+*.slxc
+slprj/
+sfprj/
+*.mat
+*.autosave
+*_rtw/
+*_ert_rtw/
+*_grt_rtw/
+.SimulinkProject/
+project.prj
+*.tlc
+*.bct
+*.rtw
+
+# Compiled MEX binaries
+*.mexw64
+*.mexw32
+*.mexa64
+*.mexmaci64
