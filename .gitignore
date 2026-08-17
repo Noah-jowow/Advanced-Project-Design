@@ -32,3 +32,11 @@ project.prj
 *.mexw32
 *.mexa64
 *.mexmaci64
+
+# Sub-Repositories
+/Aerodynamics_CFD/
+/Radar_Systems/
+/Propulsion/
+/ToolDev/
+/Tracker/
+/Career_Development/

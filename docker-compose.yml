@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  central_api_server:
+    build:
+      context: .
+      dockerfile: Central_API_Server/Dockerfile
+    container_name: central_api_server
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/Central_API_Server
+    restart: unless-stopped
+
+networks:
+  default:
+    name: advanced_engineering_network

@@ -1,0 +1,33 @@
+stages:
+  - build
+  - test
+  - security
+
+variables:
+  DOCKER_IMAGE: central_api_server:latest
+
+build_image:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  script:
+    - docker build -t $DOCKER_IMAGE -f Central_API_Server/Dockerfile .
+  tags:
+    - docker
+
+run_tests:
+  stage: test
+  image: $DOCKER_IMAGE
+  script:
+    - cd /app/Radar_Systems/tests && pytest test_parity.py
+  tags:
+    - docker
+
+run_security_scan:
+  stage: security
+  image: $DOCKER_IMAGE
+  script:
+    - bandit -r /app/Central_API_Server
+  tags:
+    - docker

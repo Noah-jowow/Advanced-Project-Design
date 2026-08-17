@@ -1,8 +1,39 @@
-# Advanced Project Design Architecture
+# Advanced Project Design Architecture: System of Systems
 
-Welcome to the Advanced Project Design workspace. This environment enforces strict architectural isolation between domains to prevent version smearing and to uphold extreme mathematical rigor.
+Welcome to the Advanced Project Design workspace. This environment enforces strict architectural isolation between mathematical domains while unifying them under a single, highly optimized API gateway.
 
-## Architectural Overview
+## 🚀 The Architecture (Single Computation Server)
+
+This workspace has been structurally modernized from monolithic MATLAB scripts into a distributed **System of Systems**. The core design philosophy is **Centralized Gateway, Decentralized Mathematics**.
+
+### Why This Architecture?
+Rather than spinning up dozens of independent servers for dozens of projects, we utilize a **Monolithic API Gateway** (`Central_API_Server/main.py`) running FastAPI. 
+1. **Decentralized Math:** The heavy mathematical processing for each domain (Radar, CFD, Propulsion) is completely isolated in raw C++ (`Eigen`) microservices.
+2. **Pybind11 Middleware:** These C++ cores are compiled into native Python extensions (`.pyd`).
+3. **Centralized Routing:** The single FastAPI server dynamically imports these C++ extensions. It holds the entire mathematical state of all projects in shared memory and handles high-frequency WebSocket streaming to the frontend.
+4. **React SPA Frontend:** The user interface is a single React/Vite application. It reads the URL parameters to dynamically display the correct engineering workbench.
+
+This ensures massive scalability. You only ever need to run *one* backend server and *one* frontend server, no matter how many projects you add to the workspace.
+
+---
+
+## ⚡ How to Launch
+
+We have abstracted all compile logic and server initialization into a single click.
+
+1. Double-click the **`AeroSys_Launcher.bat`** file in the root directory.
+2. Select your desired project from the menu:
+   - `[1] Boot Radar C2 Workspace`
+   - `[2] Boot Aerodynamics CFD Workspace`
+   - `[3] Boot Rocket Propulsion Workspace`
+
+The launcher will instantly auto-compile any C++ changes using Ninja, boot the FastAPI backend securely on `127.0.0.1`, boot the Vite frontend, and automatically open your browser directly into the project you selected.
+
+---
+
+## 🏛️ Developer Guide
+
+If you are looking to add a *new* project to this architecture, or want to understand the exact extraction methodologies used to port the MATLAB logic, please refer to the **`MODERNIZATION_BLUEPRINT_README.md`**.
 
 The repository is partitioned into strict, functional domains:
 - **`Radar_Systems/`**: Tracking algorithms, directors, and UI applications.
