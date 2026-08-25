@@ -61,3 +61,33 @@ async def optimize_expansion(req: OptimizationRequest):
         return {"optimized_expansion_ratio": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+async def prop_process_command(data: dict, opt) -> dict:
+    import asyncio
+    command = data.get("command")
+    if command == "optimize":
+        sim_data = data.get("data", {})
+        thrust = sim_data.get("thrust", 50000.0)
+        pa = sim_data.get("pa", 101325.0)
+        prop_idx = sim_data.get("prop", 0)
+        mat_idx = sim_data.get("mat", 0)
+        gens = sim_data.get("gens", 10)
+        pc_min = sim_data.get("pcMin", 1e6)
+        pc_max = sim_data.get("pcMax", 21e6)
+        tw_min = sim_data.get("twMin", 0.001)
+        tw_max = sim_data.get("twMax", 0.011)
+        
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, opt.optimize, prop_idx, mat_idx, thrust, pa, gens, pc_min, pc_max, tw_min, tw_max)
+        
+        return {
+            "geometry_x": res.x.tolist(),
+            "geometry_y": res.y.tolist(),
+            "mach_dist": res.mach.tolist(),
+            "temp": res.temperature.tolist(),
+            "t_hw": res.T_hw.tolist(),
+            "margin_of_safety": res.margin_of_safety.tolist(),
+            "isp": res.Isp_true,
+            "mos": res.MoS
+        }
+    return {}

@@ -89,19 +89,17 @@ def radar_process_command(dsp, tracker, command, sim_data):
         initial_state = np.array([x, y, z, vx, vy, vz, 0.01])
         initial_cov = np.eye(7) * 10.0
         
-        tracker.add_track(id, initial_state, initial_cov)
+        tracker.addTrack(id, initial_state, initial_cov)
         payload["message"] = f"Track {id} added successfully."
 
     return payload
 
 @router.post("/process_cpi")
 def process_cpi(req: RadarRequest):
-    if not RADAR_CORE_AVAILABLE:
-        # Try to re-import in case it was just built
-        try:
-            import radar_core
-        except ImportError:
-            return {"error": "radar_core C++ extension not found in build directory"}
+    try:
+        import radar_core
+    except ImportError:
+        return {"error": "radar_core C++ extension not found in build directory"}
         
     try:
         # Instantiate the DSP core
@@ -129,11 +127,11 @@ def process_cpi(req: RadarRequest):
         tracker = radar_core.TrackerIMM()
         init_state = np.zeros(7)
         init_cov = np.eye(7) * 100
-        tracker.initialize(init_state, init_cov)
+        tracker.addTrack(1, init_state, init_cov)
         
         # Update with a dummy measurement [r, az, el]
-        tracker.update(np.array([1000.0, 0.1, 0.05]), np.eye(3))
-        est = tracker.getEstimate()
+        tracker.update(1, np.array([1000.0, 0.1, 0.05]), np.eye(3), 1.0)
+        est = tracker.getEstimate(1)
         
         return {
             "status": "success",

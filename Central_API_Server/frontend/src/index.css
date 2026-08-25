@@ -1,64 +1,137 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #0d1117;
-  --color-sidebar: #161b22;
-  --color-panel: rgba(22, 27, 34, 0.85);
-  --color-border: #30363d;
-  --color-primary: #c9d1d9;
-  --color-secondary: #8b949e;
-  --color-accent-blue: #2f81f7;
-  --color-accent-cyan: #39c5cf;
-  --color-accent-red: #f85149;
-  --color-accent-green: #2ea043;
-  --font-sans: 'Outfit', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --color-background: #000000;
+  --color-surface: rgba(28, 28, 30, 0.65);
+  --color-surface-hover: rgba(44, 44, 46, 0.75);
+  --color-surface-solid: #1c1c1e;
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+  
+  --color-text-primary: rgba(255, 255, 255, 0.95);
+  --color-text-secondary: rgba(235, 235, 245, 0.6);
+  --color-text-tertiary: rgba(235, 235, 245, 0.3);
+
+  --color-primary: var(--theme-accent, #0A84FF);
+  --color-primary-hover: var(--theme-accent-hover, #409CFF);
+  
+  --color-accent-blue: #0A84FF;
+  --color-accent-blue-hover: #409CFF;
+  --color-accent-cyan: #64D2FF;
+  --color-accent-red: #FF453A;
+  --color-accent-green: #32D74B;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
 }
 
 @layer base {
   body {
-    @apply bg-background text-primary font-sans h-screen overflow-hidden m-0;
+    @apply bg-background text-text-primary font-sans h-screen overflow-hidden m-0 antialiased;
+    /* Subtle noise texture or radial gradient for a premium background */
+    background-image: radial-gradient(circle at 50% 0%, #151518 0%, #000000 80%);
+  }
+
+  .theme-radar {
+    --theme-accent: #64D2FF;
+    --theme-accent-hover: #0A84FF;
+  }
+  
+  .theme-cfd {
+    --theme-accent: #FF9F0A;
+    --theme-accent-hover: #FF453A;
+  }
+  
+  .theme-prop {
+    --theme-accent: #FF453A;
+    --theme-accent-hover: #FF9F0A;
+  }
+
+  /* Custom Scrollbar for a native feel */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/20 rounded-full border-[2px] border-transparent bg-clip-padding;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/30;
   }
 }
 
 @layer components {
+  /* Frosted Glass Panels */
+  .glass-panel {
+    @apply bg-surface backdrop-blur-xl border border-border rounded-xl shadow-2xl;
+  }
+
   .panel-title {
-    @apply text-[10px] font-bold text-secondary uppercase mb-2 tracking-widest flex items-center gap-2;
+    @apply text-xs font-semibold text-text-secondary tracking-wide flex items-center gap-2 mb-4 uppercase;
   }
 
   .control-group {
-    @apply mb-3 bg-black/20 p-3 rounded-lg border border-border/50;
+    @apply mb-5 bg-white/[0.03] p-4 rounded-xl border border-border/50;
   }
 
   .control-item {
-    @apply mb-2;
+    @apply mb-3 flex flex-col;
   }
 
   .control-item label {
-    @apply block text-xs mb-1 text-secondary font-semibold;
+    @apply text-[11px] mb-1.5 text-text-secondary font-medium tracking-wide uppercase;
   }
 
+  /* Form Controls */
   .control-item input[type="number"], 
   .control-item input[type="text"],
   .control-item select {
-    @apply w-full bg-[#0d1117] border border-border/50 p-1.5 rounded text-white font-mono text-xs focus:outline-none focus:border-accent-blue transition-colors;
+    @apply w-full bg-black/40 border border-border px-2.5 py-1.5 rounded-lg text-text-primary font-mono text-[13px] 
+           transition-all duration-200 outline-none
+           hover:border-border-strong focus:border-primary focus:ring-1 focus:ring-primary/50;
   }
 
   .control-item input[type="range"] {
-    @apply w-full accent-accent-blue h-1.5 bg-border rounded-lg appearance-none cursor-pointer;
+    @apply w-full accent-accent-blue h-1 bg-white/10 rounded-full appearance-none cursor-pointer;
   }
 
+  .control-item input[type="range"]::-webkit-slider-thumb {
+    @apply appearance-none w-3.5 h-3.5 rounded-full bg-white shadow-sm border border-black/10;
+  }
+
+  /* Buttons */
   .btn-primary {
-    @apply w-full p-2 border-none rounded font-bold text-xs cursor-pointer transition-all flex items-center justify-center gap-2 active:scale-95 hover:opacity-90;
+    @apply w-full py-2.5 px-4 bg-primary text-white border-none rounded-lg font-semibold text-sm cursor-pointer 
+           transition-all duration-200 flex items-center justify-center gap-2 
+           hover:bg-primary-hover active:scale-[0.98] shadow-[0_0_15px_var(--color-primary-hover)];
   }
   
+  /* Layout Cards */
   .card {
-    @apply bg-panel border border-border/30 rounded relative overflow-hidden flex flex-col shadow-sm;
+    @apply bg-surface backdrop-blur-xl border border-border rounded-xl shadow-2xl relative overflow-hidden flex flex-col transition-all duration-300;
   }
 }
 
-@keyframes progress-slide {
-  0% { transform: translateX(-100%); opacity: 0.6; }
-  50% { transform: translateX(0%); opacity: 1; }
-  100% { transform: translateX(100%); opacity: 0.6; }
+/* Animations */
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(50, 215, 75, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(50, 215, 75, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(50, 215, 75, 0); }
+}
+
+.status-indicator {
+  @apply w-2 h-2 rounded-full;
+}
+.status-connected {
+  @apply bg-accent-green;
+  animation: pulse-glow 2s infinite;
+}
+.status-disconnected {
+  @apply bg-accent-red;
+}
+.status-connecting {
+  @apply bg-[#FF9F0A] animate-pulse; /* System Orange */
 }

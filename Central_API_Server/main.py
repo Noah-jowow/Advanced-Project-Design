@@ -110,7 +110,7 @@ except ImportError:
 
 # Future microservice routers will be imported here
 from api_gateway.radar_router import router as radar_router, radar_process_command
-from api_gateway.prop_router import router as prop_router
+from api_gateway.prop_router import router as prop_router, prop_process_command
 app.include_router(radar_router, prefix="/api/radar")
 app.include_router(prop_router, prefix="/api/prop")
 
@@ -138,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
             # Initialize a track at (1000, 100, 5000)
             initial_state = np.array([1000.0, 100.0, 5000.0, 300.0, 0.1, 0.0, 0.01])
             initial_cov = np.eye(7) * 10.0
-            tracker.add_track(1, initial_state, initial_cov)
+            tracker.addTrack(1, initial_state, initial_cov)
             t_last = asyncio.get_event_loop().time()
 
         
@@ -183,7 +183,7 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                     meas = np.array([1000.0 + random.uniform(-5, 5), 100.0 + random.uniform(-5, 5), 5000.0 + random.uniform(-2, 2)])
                     tracker.update(1, meas, np.eye(3) * 5.0, dt)
                     
-                    estimates = tracker.get_multi_track_estimates()
+                    estimates = tracker.getMultiTrackEstimates()
                     if 1 in estimates:
                         est = estimates[1]
                         payload["data"]["track_history_x"] = [est[0]]
@@ -498,32 +498,8 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
 
                     
                 elif domain == "prop" and command == "optimize" and PROP_AVAILABLE:
-                    sim_data = data.get("data", {})
-                    thrust = sim_data.get("thrust", 50000.0)
-                    pa = sim_data.get("pa", 101325.0)
-                    prop_idx = sim_data.get("prop", 0)
-                    mat_idx = sim_data.get("mat", 0)
-                    gens = sim_data.get("gens", 10)
-                    pc_min = sim_data.get("pcMin", 1e6)
-                    pc_max = sim_data.get("pcMax", 21e6)
-                    tw_min = sim_data.get("twMin", 0.001)
-                    tw_max = sim_data.get("twMax", 0.011)
-                    
-                    # Execute C++ GA Optimizer in a separate thread
-                    loop = asyncio.get_event_loop()
-                    res = await loop.run_in_executor(None, opt.optimize, prop_idx, mat_idx, thrust, pa, gens, pc_min, pc_max, tw_min, tw_max)
-                    
-                    payload["data"]["geometry_x"] = res.x.tolist()
-                    payload["data"]["geometry_y"] = res.y.tolist()
-                    payload["data"]["mach_dist"] = res.mach.tolist()
-                    payload["data"]["temp"] = res.temperature.tolist()
-                    payload["data"]["t_hw"] = res.T_hw.tolist()
-                    payload["data"]["margin_of_safety"] = res.margin_of_safety.tolist()
-                    payload["data"]["isp"] = res.Isp_true
-                    payload["data"]["mos"] = res.MoS
-
-
-
+                    prop_results = await prop_process_command(data, opt)
+                    payload["data"].update(prop_results)
 
                 await manager.send_json(payload, websocket)
                 
@@ -538,7 +514,16 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                 # Handle disconnects or bad messages gracefully
                 if "disconnect" in str(e).lower() or "close" in str(e).lower():
                     break
-                print(f"WebSocket command error: {e}")
+                print(f"[SYSTEM] WebSocket command error in domain {domain}: {e}")
+                try:
+                    error_payload = {
+                        "domain": domain,
+                        "type": "result",
+                        "data": {"error": f"Internal Server Error: {str(e)}"}
+                    }
+                    await manager.send_json(error_payload, websocket)
+                except Exception:
+                    pass
                 
     except WebSocketDisconnect:
         manager.disconnect(websocket)

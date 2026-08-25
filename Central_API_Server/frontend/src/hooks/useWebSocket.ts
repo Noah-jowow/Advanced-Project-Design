@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { SimulationPayload, WsMessage } from '../types';
 
 export function useWebSocket(domain: string) {
   const [status, setStatus] = useState<'CONNECTING' | 'CONNECTED' | 'DISCONNECTED'>('CONNECTING');
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<SimulationPayload | null>(null);
   const [logs, setLogs] = useState<{timestamp: string, message: string}[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -26,9 +27,9 @@ export function useWebSocket(domain: string) {
       
       ws.onmessage = (event) => {
         try {
-          const response = JSON.parse(event.data);
+          const response = JSON.parse(event.data) as WsMessage;
           if (response.type === 'result') {
-            setData((prev: any) => ({ ...prev, ...response.data }));
+            setData((prev: SimulationPayload | null) => ({ ...(prev || {}), ...response.data }));
           } else if (response.type === 'log') {
             setLogs(prev => [...prev, { 
               timestamp: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -51,7 +52,7 @@ export function useWebSocket(domain: string) {
     };
   }, [domain]);
 
-  const sendCommand = useCallback((command: string, payload: any) => {
+  const sendCommand = useCallback((command: string, payload: SimulationPayload) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command, data: payload }));
     } else {

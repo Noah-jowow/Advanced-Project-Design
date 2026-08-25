@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { PlotCard } from './PlotCard';
+import type { CFDData } from '../types';
 
 export function CFDPanel() {
   const { status, data, logs, sendCommand } = useWebSocket('aero');
@@ -16,7 +17,6 @@ export function CFDPanel() {
   
   const [generating, setGenerating] = useState(false);
   const [stage, setStage] = useState(0);
-  const [previewCounter, setPreviewCounter] = useState(0);
   
   const [showGeometry, setShowGeometry] = useState(true);
   const [showDomain, setShowDomain] = useState(true);
@@ -50,6 +50,7 @@ export function CFDPanel() {
 
   // Clear generating flag when new data arrives
   useEffect(() => {
+    // eslint-disable-next-line
     if (data?.mode || data?.error) setGenerating(false);
     if (data?.error) alert("Server Error: " + data.error);
   }, [data]);
@@ -57,9 +58,8 @@ export function CFDPanel() {
   // Debounced live geometry preview (Tier 1: fast NumPy)
   useEffect(() => {
     if (stage === 1 && status === 'CONNECTED') {
-      setGenerating(true);
       const timer = setTimeout(() => {
-        setPreviewCounter(c => c + 1);
+        setGenerating(true);
         sendCommand('preview_geometry', params);
       }, 300);
       return () => clearTimeout(timer);
@@ -67,14 +67,14 @@ export function CFDPanel() {
   }, [
     params.nacaType, params.wingtip, params.customCoords, 
     params.rootChord, params.span, params.sweepOffset, params.tipScale, params.stl_base64,
-    stage, status
+    stage, status, sendCommand, params
   ]);
 
   // Debounced live domain preview
   useEffect(() => {
     if (stage === 2 && status === 'CONNECTED') {
-      setGenerating(true);
       const timer = setTimeout(() => {
+        setGenerating(true);
         sendCommand('preview_domain', params);
       }, 500);
       return () => clearTimeout(timer);
@@ -84,7 +84,7 @@ export function CFDPanel() {
     params.blockXMinMult, params.blockXMaxMult, params.blockYMinMult, params.blockYMaxMult, params.blockZMinMult, params.blockZMaxMult,
     params.bcXMin, params.bcXMax, params.bcYMin, params.bcYMax, params.bcZMin, params.bcZMax,
     params.bcUpstream, params.bcDownstream, params.bcRadial,
-    stage, status
+    stage, status, sendCommand, params
   ]);
 
 
@@ -99,10 +99,9 @@ export function CFDPanel() {
     }
   };
 
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const { name } = e.target;
+  const handleBlur = () => {
     setParams(prev => {
-      let next = { ...prev };
+      const next = { ...prev };
       
       // Sanity checks on blur to avoid interfering with active typing (e.g. typing "0.")
       if (typeof next.meshSizeMin === 'number' && next.meshSizeMin <= 0) next.meshSizeMin = 0.01;
@@ -153,7 +152,7 @@ export function CFDPanel() {
   const handleSpanChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value === '' ? 0 : Number(e.target.value);
     setParams(prev => {
-      const next = { ...prev, span: e.target.value === '' ? '' : val };
+      const next = { ...prev, span: val };
       if (e.target.value !== '') {
         next.sweepOffset = Number((val * Math.tan(prev.sweepDeg * Math.PI / 180)).toFixed(4));
       }
@@ -195,8 +194,8 @@ export function CFDPanel() {
     setStage(5);
   };
 
-  const getFlowArrowTrace = (dataObj: any) => {
-    if (!dataObj?.x) return null;
+  const getFlowArrowTrace = (dataObj: CFDData) => {
+    if (!dataObj?.x || !dataObj?.y) return null;
     const minX = Math.min(...dataObj.x) - (params.rootChord * 2.0);
     const minY = Math.min(...dataObj.y) - params.rootChord;
     const minZ = 0; // Root of the wing
@@ -218,7 +217,7 @@ export function CFDPanel() {
 
   const renderGeometryPreview = () => {
     if (!data?.x || data.mode !== 'geometry') return <div className="p-4 text-secondary">No geometry generated yet.</div>;
-    const plotData: any[] = [{ 
+    const plotData: Record<string, unknown>[] = [{ 
       x: data.x, y: data.y, z: data.z, 
       i: data.i, j: data.j, k: data.k,
       type: 'mesh3d', color: '#2ea043', flatshading: true, showedges: showMeshLines
@@ -239,7 +238,7 @@ export function CFDPanel() {
   const renderDomainPreview = () => {
     if (!data?.mode || data.mode !== 'domain') return <div className="p-4 text-secondary">No domain generated yet.</div>;
     
-    const plotData: any[] = [];
+    const plotData: Record<string, unknown>[] = [];
     
     if (showGeometry && data.aero_x) {
       plotData.push({ 
@@ -277,7 +276,7 @@ export function CFDPanel() {
         />
         
         {/* Legend Overlay */}
-        <div className="absolute top-12 right-4 bg-background/90 border border-border p-2 rounded text-xs pointer-events-none shadow-md z-10">
+        <div className="absolute top-12 right-4 bg-black/40/90 border border-border p-2 rounded text-xs pointer-events-none shadow-md z-10">
           <div className="font-bold mb-1 border-b border-border pb-1">Boundary Tags</div>
           <div className="flex items-center gap-2"><div className="w-3 h-3 bg-[#aaaaaa] border border-gray-600 rounded-sm"></div> Wall</div>
           <div className="flex items-center gap-2 mt-1"><div className="w-3 h-3 bg-[#ff4444] border border-gray-600 rounded-sm"></div> Velocity Inlet</div>
@@ -293,8 +292,8 @@ export function CFDPanel() {
     if (!data?.post_x || data.mode !== 'post_process') return <div className="p-4 text-secondary">Awaiting Post Processing Data...</div>;
     
     let intensityData;
-    let colorscale = 'Jet';
-    let titleStr = '';
+    const colorscale = 'Jet';
+    let titleStr: string;
     
     if (postMap === 'mach') {
       intensityData = data.post_mach;
@@ -315,7 +314,7 @@ export function CFDPanel() {
             x: data.post_x, y: data.post_y, z: data.post_z, 
             i: data.post_i, j: data.post_j, k: data.post_k,
             intensity: intensityData, type: 'mesh3d', 
-            colorscale: colorscale, flatshading: true, showedges: showMeshLines
+            colorscale: colorscale, intensitymode: 'cell', flatshading: true, showedges: showMeshLines
           }]}  
         />
       </div>
@@ -325,14 +324,12 @@ export function CFDPanel() {
   const renderSolverResults = () => {
     if (!data?.cfd_mach) return <div className="p-4 text-secondary">Awaiting solver initialization...</div>;
     
-    const plotData: any[] = [{ 
+    const plotData: Record<string, unknown>[] = [{ 
       x: data.cfd_x, y: data.cfd_y, z: data.cfd_z, 
       i: data.cfd_i, j: data.cfd_j, k: data.cfd_k,
       intensity: data.cfd_mach, type: 'mesh3d', 
-      colorscale: 'Jet', flatshading: true, showedges: showMeshLines
+      colorscale: 'Jet', intensitymode: 'cell', flatshading: true, showedges: showMeshLines
     }];
-    const arrow = getFlowArrowTrace({ x: data.cfd_x, y: data.cfd_y });
-    if (arrow) plotData.push(arrow);
 
     return (
       <div className="grid grid-cols-2 gap-4 h-full p-2">
@@ -377,12 +374,12 @@ export function CFDPanel() {
   };
 
   return (
-    <div className="flex h-full w-full">
+    <div className="grid grid-cols-[380px_1fr] h-full w-full gap-6 p-6">
       {/* Sidebar Wizard */}
-      <aside className="w-80 bg-sidebar border-r border-border p-4 overflow-y-auto flex flex-col gap-4">
+      <aside className="w-80 glass-panel overflow-y-auto flex flex-col p-6 gap-5">
         
         {/* Stage 0: Environment */}
-        <div className={`p-3 rounded-md border border-accent-cyan bg-panel`}>
+        <div className={`p-3 rounded-md border border-accent-cyan glass-panel`}>
           <div 
             className="font-bold text-sm mb-2 cursor-pointer hover:text-accent-cyan transition-colors flex justify-between items-center"
             onClick={() => { setStage(0); }}
@@ -396,31 +393,31 @@ export function CFDPanel() {
               <div className="grid grid-cols-3 gap-2 border-b border-border pb-2 mb-2">
                 <div>
                   <label>Mach</label>
-                  <input type="number" name="mach" value={params.mach} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="mach" value={params.mach} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>AoA [deg]</label>
-                  <input type="number" name="aoa" value={params.aoa} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="aoa" value={params.aoa} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>Alt (m)</label>
-                  <input type="number" name="alt" value={params.alt} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="alt" value={params.alt} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
               </div>
               <label>Gas Constant [J/(kg·K)]</label>
-              <input type="number" name="gas_constant" value={params.gas_constant} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+              <input type="number" name="gas_constant" value={params.gas_constant} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
               <label>Heat Capacity Ratio (γ)</label>
-              <input type="number" name="gamma" value={params.gamma} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" step="0.01" />
+              <input type="number" name="gamma" value={params.gamma} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" step="0.01" />
               <label>Prandtl Number (Pr)</label>
-              <input type="number" name="prandtl" value={params.prandtl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" step="0.01" />
+              <input type="number" name="prandtl" value={params.prandtl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" step="0.01" />
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <div>
                   <label>SL Temp [K]</label>
-                  <input type="number" name="T_sl" value={params.T_sl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="T_sl" value={params.T_sl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>SL Press [Pa]</label>
-                  <input type="number" name="P_sl" value={params.P_sl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="P_sl" value={params.P_sl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
               </div>
               
@@ -435,32 +432,32 @@ export function CFDPanel() {
                 {showAdvancedEnv && (
                   <div className="p-2 flex flex-col gap-2">
                     <label>Lapse Rate [K/m]</label>
-                    <input type="number" name="lapseRate" value={params.lapseRate} onChange={handleChange} onBlur={handleBlur} step="0.0001" className="w-full bg-background border border-border p-1 rounded" />
+                    <input type="number" name="lapseRate" value={params.lapseRate} onChange={handleChange} onBlur={handleBlur} step="0.0001" className="w-full bg-black/40 border border-border p-1 rounded" />
                     
                     <div className="text-accent-cyan font-bold mt-1">Sutherland's Law</div>
                     <label>Reference Viscosity (μ0)</label>
-                    <input type="number" name="suth_mu0" value={params.suth_mu0} onChange={handleChange} onBlur={handleBlur} step="1e-6" className="w-full bg-background border border-border p-1 rounded" />
+                    <input type="number" name="suth_mu0" value={params.suth_mu0} onChange={handleChange} onBlur={handleBlur} step="1e-6" className="w-full bg-black/40 border border-border p-1 rounded" />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label>Ref Temp (T0) [K]</label>
-                        <input type="number" name="suth_T0" value={params.suth_T0} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                        <input type="number" name="suth_T0" value={params.suth_T0} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                       </div>
                       <div>
                         <label>Constant (S) [K]</label>
-                        <input type="number" name="suth_S" value={params.suth_S} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                        <input type="number" name="suth_S" value={params.suth_S} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                       </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              <button onClick={() => setStage(1)} className="btn-primary bg-accent-cyan text-black mt-2">Confirm & Continue</button>
+              <button onClick={() => setStage(1)} className="btn-primary mt-2">Confirm & Continue</button>
             </div>
           )}
         </div>
 
         {/* Stage 1: Geometry */}
-        <div className={`p-3 rounded-md border ${stage >= 1 ? 'border-accent-cyan bg-panel' : 'border-border opacity-50'}`}>
+        <div className={`p-3 rounded-md border ${stage >= 1 ? 'border-accent-cyan glass-panel' : 'border-border opacity-50'}`}>
           <div 
             className="font-bold text-sm mb-2 cursor-pointer hover:text-accent-cyan transition-colors flex justify-between items-center"
             onClick={() => { if (stage >= 1) { setStage(1); } }}
@@ -472,7 +469,7 @@ export function CFDPanel() {
           {stage === 1 && (
             <div className="flex flex-col gap-2 text-xs">
               <label>Airfoil Profile</label>
-              <select name="nacaType" value={params.nacaType} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+              <select name="nacaType" value={params.nacaType} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="0012">NACA 0012</option>
                 <option value="2412">NACA 2412</option>
                 <option value="4412">NACA 4412</option>
@@ -480,28 +477,28 @@ export function CFDPanel() {
                 <option value="Custom">Custom (.dat)</option>
               </select>
               {params.nacaType === 'Custom' && (
-                <input type="file" accept=".dat,.txt" onChange={handleFileUpload} className="bg-background border border-border p-1 rounded text-xs" />
+                <input type="file" accept=".dat,.txt" onChange={handleFileUpload} className="bg-black/40 border border-border p-1 rounded text-xs" />
               )}
               <label>Wingtip Style</label>
-              <select name="wingtip" value={params.wingtip} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+              <select name="wingtip" value={params.wingtip} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="flat">Flat</option>
                 <option value="semi-elliptical">Semi-Elliptical</option>
                 <option value="hoerner">Hoerner</option>
               </select>
               <label>Root Chord (m)</label>
-              <input type="number" name="rootChord" value={params.rootChord} onChange={handleChange} className="bg-background border border-border p-1 rounded" />
+              <input type="number" name="rootChord" value={params.rootChord} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded" />
               <label>Span (m)</label>
-              <input type="number" name="span" value={params.span} onChange={handleSpanChange} className="bg-background border border-border p-1 rounded" />
+              <input type="number" name="span" value={params.span} onChange={handleSpanChange} className="bg-black/40 border border-border p-1 rounded" />
               <label>Tip Scale (Taper Ratio)</label>
-              <input type="number" name="tipScale" value={params.tipScale} onChange={handleChange} step="0.1" max="1.0" min="0.01" className="bg-background border border-border p-1 rounded" />
+              <input type="number" name="tipScale" value={params.tipScale} onChange={handleChange} step="0.1" max="1.0" min="0.01" className="bg-black/40 border border-border p-1 rounded" />
               <div className="flex gap-2">
                 <div className="flex-1">
                   <label>Sweep (deg)</label>
-                  <input type="number" name="sweepDeg" value={params.sweepDeg} onChange={handleSweepChange} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="sweepDeg" value={params.sweepDeg} onChange={handleSweepChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div className="flex-1">
                   <label>Sweep Offset (m)</label>
-                  <input type="number" name="sweepOffset" value={params.sweepOffset} onChange={handleSweepChange} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="sweepOffset" value={params.sweepOffset} onChange={handleSweepChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
               </div>
               <label>Custom STL Geometry (Fallback)</label>
@@ -514,15 +511,15 @@ export function CFDPanel() {
                   };
                   reader.readAsDataURL(file);
                 }
-              }} className="bg-background border border-border p-1 rounded text-xs" />
+              }} className="bg-black/40 border border-border p-1 rounded text-xs" />
               {params.stl_path && <div className="text-accent-green text-xs">Loaded: {params.stl_path}</div>}
-              <button onClick={handleStage1} className="btn-primary bg-accent-cyan text-black mt-2">Confirm & Continue</button>
+              <button onClick={handleStage1} className="btn-primary mt-2">Confirm & Continue</button>
             </div>
           )}
         </div>
 
         {/* Stage 2: Domain */}
-        <div className={`p-3 rounded-md border ${stage >= 2 ? 'border-accent-cyan bg-panel' : 'border-border opacity-50'}`}>
+        <div className={`p-3 rounded-md border ${stage >= 2 ? 'border-accent-cyan glass-panel' : 'border-border opacity-50'}`}>
           <div 
             className="font-bold text-sm mb-2 cursor-pointer hover:text-accent-cyan transition-colors flex justify-between items-center"
             onClick={() => { if (stage >= 2) { setStage(2); } }}
@@ -534,7 +531,7 @@ export function CFDPanel() {
           {stage === 2 && (
             <div className="flex flex-col gap-2 text-xs">
               <label>Domain Shape</label>
-              <select name="domainShape" value={params.domainShape} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+              <select name="domainShape" value={params.domainShape} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="block">Block (Box)</option>
                 <option value="cylinder">Cylinder</option>
               </select>
@@ -542,59 +539,59 @@ export function CFDPanel() {
               {params.domainShape === 'cylinder' ? (
                 <>
                   <label>Cylinder Axis</label>
-                  <select name="cylAxis" value={params.cylAxis} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+                  <select name="cylAxis" value={params.cylAxis} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                     <option value="X">X-Axis (Streamwise)</option>
                     <option value="Y">Y-Axis (Vertical)</option>
                     <option value="Z">Z-Axis (Spanwise)</option>
                   </select>
                   <label>Radius (Multiple of Root Chord)</label>
-                  <input type="number" name="cylRadiusMult" value={params.cylRadiusMult} onChange={handleChange} className="bg-background border border-border p-1 rounded" />
+                  <input type="number" name="cylRadiusMult" value={params.cylRadiusMult} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded" />
                   <label>Upstream Length (Multiple of Root Chord)</label>
-                  <input type="number" name="cylUpMult" value={params.cylUpMult} onChange={handleChange} className="bg-background border border-border p-1 rounded" />
+                  <input type="number" name="cylUpMult" value={params.cylUpMult} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded" />
                   <label>Downstream Length (Multiple of Root Chord)</label>
-                  <input type="number" name="cylDownMult" value={params.cylDownMult} onChange={handleChange} className="bg-background border border-border p-1 rounded" />
+                  <input type="number" name="cylDownMult" value={params.cylDownMult} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded" />
                 </>
               ) : (
                 <>
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label>X-Min (Upstream, Mult of Chord)</label>
-                      <input type="number" name="blockXMinMult" value={params.blockXMinMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockXMinMult" value={params.blockXMinMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                     <div className="flex-1">
                       <label>X-Max (Downstream, Mult of Chord)</label>
-                      <input type="number" name="blockXMaxMult" value={params.blockXMaxMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockXMaxMult" value={params.blockXMaxMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                   </div>
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label>Y-Min (Lower, Mult of Chord)</label>
-                      <input type="number" name="blockYMinMult" value={params.blockYMinMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockYMinMult" value={params.blockYMinMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                     <div className="flex-1">
                       <label>Y-Max (Upper, Mult of Chord)</label>
-                      <input type="number" name="blockYMaxMult" value={params.blockYMaxMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockYMaxMult" value={params.blockYMaxMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                   </div>
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label>Z-Min (Root/Symmetry, Mult of Span)</label>
-                      <input type="number" name="blockZMinMult" value={params.blockZMinMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockZMinMult" value={params.blockZMinMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                     <div className="flex-1">
                       <label>Z-Max (Tip, Mult of Span)</label>
-                      <input type="number" name="blockZMaxMult" value={params.blockZMaxMult} onChange={handleChange} className="w-full bg-background border border-border p-1 rounded" />
+                      <input type="number" name="blockZMaxMult" value={params.blockZMaxMult} onChange={handleChange} className="w-full bg-black/40 border border-border p-1 rounded" />
                     </div>
                   </div>
                 </>
               )}
-              <button onClick={handleStage2} className="btn-primary bg-accent-cyan text-black mt-2">Generate Domain</button>
+              <button onClick={handleStage2} className="btn-primary mt-2">Generate Domain</button>
             </div>
           )}
         </div>
 
         {/* Stage 3: Mesher */}
-        <div className={`p-3 rounded-md border ${stage >= 3 ? 'border-accent-cyan bg-panel' : 'border-border opacity-50'}`}>
+        <div className={`p-3 rounded-md border ${stage >= 3 ? 'border-accent-cyan glass-panel' : 'border-border opacity-50'}`}>
           <div 
             className="font-bold text-sm mb-2 cursor-pointer hover:text-accent-cyan transition-colors flex justify-between items-center"
             onClick={() => { if (stage >= 3) { setStage(3); } }}
@@ -606,7 +603,7 @@ export function CFDPanel() {
           {stage === 3 && (
             <div className="flex flex-col gap-2 text-xs">
               <label className="font-bold text-accent-cyan">Meshing Preset</label>
-              <select name="mesh" value={params.mesh} onChange={handleMeshPresetChange} className="bg-background border border-border p-1 rounded">
+              <select name="mesh" value={params.mesh} onChange={handleMeshPresetChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="coarse">Coarse (Fast Preview)</option>
                 <option value="medium">Medium (Standard)</option>
                 <option value="fine">Fine (High Fidelity)</option>
@@ -616,15 +613,15 @@ export function CFDPanel() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label>Max Size (m)</label>
-                  <input type="number" name="meshSizeMax" value={params.meshSizeMax} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="meshSizeMax" value={params.meshSizeMax} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>Min Size (m)</label>
-                  <input type="number" name="meshSizeMin" value={params.meshSizeMin} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="meshSizeMin" value={params.meshSizeMin} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>Growth Rate</label>
-                  <input type="number" name="growthRate" value={params.growthRate} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="growthRate" value={params.growthRate} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
               </div>
 
@@ -636,11 +633,11 @@ export function CFDPanel() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label>First Layer (m)</label>
-                    <input type="number" name="blFirstLayer" value={params.blFirstLayer} onChange={handleChange} onBlur={handleBlur} className={`w-full bg-background border p-1 rounded ${params.blFirstLayer < 0.01 ? 'border-accent-red' : 'border-border'}`} />
+                    <input type="number" name="blFirstLayer" value={params.blFirstLayer} onChange={handleChange} onBlur={handleBlur} className={`w-full bg-black/40 border p-1 rounded ${params.blFirstLayer < 0.01 ? 'border-accent-red' : 'border-border'}`} />
                   </div>
                   <div>
                     <label>Layers</label>
-                    <input type="number" name="blNumLayers" value={params.blNumLayers} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                    <input type="number" name="blNumLayers" value={params.blNumLayers} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                   </div>
                   {params.blFirstLayer < 0.01 && (
                     <div className="col-span-2 text-accent-red text-[10px] leading-tight">
@@ -658,22 +655,22 @@ export function CFDPanel() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label>Wake Length (m)</label>
-                    <input type="number" name="wakeLength" value={params.wakeLength} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                    <input type="number" name="wakeLength" value={params.wakeLength} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                   </div>
                   <div>
                     <label>Wake Size (m)</label>
-                    <input type="number" name="wakeSize" value={params.wakeSize} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                    <input type="number" name="wakeSize" value={params.wakeSize} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                   </div>
                 </div>
               )}
 
-              <button onClick={handleStage3} className="btn-primary bg-accent-cyan text-black mt-2">Configure Mesher</button>
+              <button onClick={handleStage3} className="btn-primary mt-2">Configure Mesher</button>
             </div>
           )}
         </div>
 
         {/* Stage 4: Solver */}
-        <div className={`p-3 rounded-md border ${stage >= 4 ? 'border-accent-cyan bg-panel' : 'border-border opacity-50'}`}>
+        <div className={`p-3 rounded-md border ${stage >= 4 ? 'border-accent-cyan glass-panel' : 'border-border opacity-50'}`}>
           <div 
             className="font-bold text-sm mb-2 cursor-pointer hover:text-accent-cyan transition-colors flex justify-between items-center"
             onClick={() => { if (stage >= 4) { setStage(4); } }}
@@ -686,28 +683,28 @@ export function CFDPanel() {
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label>CFL</label>
-                  <input type="number" name="cfl" value={params.cfl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="cfl" value={params.cfl} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>Max Iters</label>
-                  <input type="number" name="maxIters" value={params.maxIters} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="maxIters" value={params.maxIters} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
                 <div>
                   <label>Epsilon</label>
-                  <input type="number" name="epsilon" value={params.epsilon} onChange={handleChange} onBlur={handleBlur} className="w-full bg-background border border-border p-1 rounded" />
+                  <input type="number" name="epsilon" value={params.epsilon} onChange={handleChange} onBlur={handleBlur} className="w-full bg-black/40 border border-border p-1 rounded" />
                 </div>
               </div>
               <label>Discretization Scheme</label>
-              <select name="scheme" value={params.scheme} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+              <select name="scheme" value={params.scheme} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="AUSM+">AUSM+</option>
                 <option value="ROE">Roe FDS</option>
               </select>
               <label>Turbulence Model</label>
-              <select name="turb" value={params.turb} onChange={handleChange} className="bg-background border border-border p-1 rounded">
+              <select name="turb" value={params.turb} onChange={handleChange} className="bg-black/40 border border-border p-1 rounded">
                 <option value="DDES">SA-DDES</option>
                 <option value="RANS">SA-RANS</option>
               </select>
-              <button onClick={handleStage4} className="btn-primary bg-accent-cyan text-black mt-2">▶ RUN SOLVER</button>
+              <button onClick={handleStage4} className="btn-primary mt-2">▶ RUN SOLVER</button>
             </div>
           )}
         </div>
@@ -719,23 +716,23 @@ export function CFDPanel() {
       </aside>
 
       {/* Main Viewport */}
-      <div className="flex-1 p-4 bg-background flex flex-col overflow-hidden">
+      <div className="flex-1 p-4 bg-black/40 flex flex-col overflow-hidden">
         {/* Progress Bar */}
         {generating && (
           <div className="w-full h-1 bg-border rounded-full overflow-hidden mb-1 shrink-0">
-            <div className="h-full bg-accent-cyan rounded-full animate-pulse" style={{ width: '100%', animation: 'progress-slide 1.2s ease-in-out infinite' }} />
+            <div className="h-full bg-primary rounded-full animate-pulse" style={{ width: '100%', animation: 'progress-slide 1.2s ease-in-out infinite' }} />
           </div>
         )}
         <div className="flex justify-between items-center mb-4 border-b border-border">
           <div className="flex gap-2">
             <button 
-              className={`px-6 py-2 text-sm font-bold rounded-t-md ${viewMode === 'stage' ? 'bg-accent-cyan text-black' : 'bg-panel text-secondary hover:text-white'}`}
+              className={`px-6 py-2 text-sm font-bold rounded-t-md ${viewMode === 'stage' ? 'bg-primary text-black' : 'glass-panel text-secondary hover:text-white'}`}
               onClick={() => setViewMode('stage')}
             >
               Current Stage View
             </button>
             <button 
-              className={`px-6 py-2 text-sm font-bold rounded-t-md ${viewMode === 'post' ? 'bg-accent-cyan text-black' : 'bg-panel text-secondary hover:text-white'}`}
+              className={`px-6 py-2 text-sm font-bold rounded-t-md ${viewMode === 'post' ? 'bg-primary text-black' : 'glass-panel text-secondary hover:text-white'}`}
               onClick={() => setViewMode('post')}
               disabled={data?.mode !== 'post_process'}
             >
@@ -759,7 +756,7 @@ export function CFDPanel() {
             </div>
           ) : (
             <div className="flex gap-4 pr-4">
-              <select value={postMap} onChange={(e) => setPostMap(e.target.value as any)} className="bg-background border border-border p-1 rounded text-sm text-white">
+              <select value={postMap} onChange={(e) => setPostMap(e.target.value as 'pressure'|'mach'|'velocity')} className="bg-black/40 border border-border p-1 rounded text-sm text-white">
                 <option value="pressure">Pressure (Pa)</option>
                 <option value="mach">Mach Number</option>
                 <option value="velocity">Velocity (m/s)</option>
