@@ -1,21 +1,20 @@
 ---
-name: Strict Post-Generation Review
-description: Enforce linting, static analysis, and interface validation after any code generation or modification.
+description: "Ensure proactive linting and memory checks during code generation"
 ---
 
-# Strict Post-Generation Review
+# Code Quality & Linting Rule
 
-Whenever you generate or modify code, you MUST follow these validation steps before proceeding:
+As an Antigravity agent, whenever you generate or modify code in this workspace, you MUST proactively ensure it meets quality and stability standards:
 
-1. **Frontend (TypeScript/React):**
-   - Run `npm run lint` in the relevant frontend directory (e.g., `Central_API_Server/frontend`).
-   - Resolve ALL warnings and errors immediately. Do not ignore them.
+1. **TypeScript/React (Frontend)**:
+   - After generating or editing TS/TSX files, run `npm run lint` in the `Central_API_Server/frontend` directory.
+   - Resolve any warnings or errors (such as `@typescript-eslint/no-explicit-any` or `react-hooks/exhaustive-deps`) immediately before concluding your turn.
 
-2. **Backend (Python):**
-   - Run `python -m py_compile <file>` to check for syntax errors.
-   - If available, use `flake8` or `ruff` to validate the code.
+2. **Python (Backend)**:
+   - After modifying Python files, run `python -m py_compile <file>` to catch syntax errors.
+   - Run `flake8` or `ruff` if available to ensure clean code without unused imports or undefined variables.
 
-3. **C++ / Pybind11 Integrations:**
-   - Validate C++ integrations for memory discontinuities.
-   - Verify array shape matches between Python (NumPy) and C++ (Eigen).
-   - Either run parity tests or statically analyze Pybind11 bindings before finalizing changes.
+3. **C++ (Core Physics/Radar)**:
+   - Pay special attention to Pybind11 integration boundaries (e.g., `radar_router.py` to `TrackerIMM.cpp`). 
+   - Verify array shapes and dimensionalities (e.g., passing 1D arrays to Eigen vectors, 2D arrays to matrices).
+   - Watch out for memory discontinuities or segmentation faults by relying on strict compile-time checks and type hinting.

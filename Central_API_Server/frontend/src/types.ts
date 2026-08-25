@@ -65,15 +65,46 @@ export interface RadarData {
   rd_matrix?: number[][];
   stap_weights?: string[];
   stap_covariance_norm?: number;
+  stap_covariance?: number[][];
   message?: string;
   error?: string;
   status?: string;
   rd_matrix_shape?: [number, number];
   num_detections?: number;
   tracker_estimate?: number[];
+  
+  // Spatial pattern
+  spatial_pattern?: number[][];
+  azimuth_cut?: number[];
+  elevation_cut?: number[];
+
+  // 1D and CFAR
+  cfar_detections?: number[][];
+  mf_profile?: number[];
+  snr_range?: number[];
+
+  // Tracker History and Ellipsoid
+  track_history_x?: number[];
+  track_history_y?: number[];
+  track_history_z?: number[];
+  ellipsoid_x?: number[];
+  ellipsoid_y?: number[];
+  ellipsoid_z?: number[];
+
+  // Pointer Dynamics
+  hex_tp?: number[][];
+  hex_base?: number[][];
+  hex_laser?: number[];
+  hex_forces?: number[];
+  hex_warn?: string;
+  hex_cond?: number;
+  azel_q?: number[];
+  azel_tau_a?: number;
+  azel_tau_e?: number;
+  azel_warn?: string;
 }
 
 // Propulsion Specific Types
 export type PropulsionData = Record<string, unknown>;
 
-export type SimulationPayload = Record<string, any>;
+export type SimulationPayload = Record<string, unknown>;

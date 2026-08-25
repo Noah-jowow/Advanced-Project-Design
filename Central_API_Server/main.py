@@ -139,6 +139,7 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
             initial_state = np.array([1000.0, 100.0, 5000.0, 300.0, 0.1, 0.0, 0.01])
             initial_cov = np.eye(7) * 10.0
             tracker.addTrack(1, initial_state, initial_cov)
+            pointer_dyn = radar_core.PointerDynamics()
             t_last = asyncio.get_event_loop().time()
 
         
@@ -220,6 +221,25 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                         except Exception as e:
                             print(f"Ellipsoid Generation Error: {e}")
 
+                        # Update Pointer Dynamics
+                        try:
+                            target_pos = np.array([est[0], est[1], est[2]])
+                            hex_state = pointer_dyn.stepHexapod(target_pos, dt)
+                            azel_state = pointer_dyn.stepAzEl(target_pos, dt)
+                            
+                            payload["data"]["hex_tp"] = hex_state.TP.tolist()
+                            payload["data"]["hex_base"] = pointer_dyn.getHexBase().tolist()
+                            payload["data"]["hex_laser"] = hex_state.laser_vec.tolist()
+                            payload["data"]["hex_forces"] = hex_state.Fa.tolist()
+                            payload["data"]["hex_warn"] = hex_state.warning_state
+                            payload["data"]["hex_cond"] = hex_state.cond_J
+                            
+                            payload["data"]["azel_q"] = azel_state.q.tolist()
+                            payload["data"]["azel_tau_a"] = azel_state.tau_a
+                            payload["data"]["azel_tau_e"] = azel_state.tau_e
+                            payload["data"]["azel_warn"] = azel_state.warning_state
+                        except Exception as e:
+                            print(f"Pointer Dynamics Error: {e}")
 
                     
                 elif domain == "aero" and command == "preview_geometry":
