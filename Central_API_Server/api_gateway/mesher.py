@@ -172,7 +172,6 @@ def generate_preview(params):
     elif wingtip == 'hoerner':
         tip_chord = rootChord * tipScale
         cap_depth = tip_chord * 0.08
-        tip_y_max = tip_ring[:, 1].max()
 
         n_cap = 8
         prev_start = tip_start
@@ -508,12 +507,9 @@ def generate_mesh(params, log_queue=None):
         # --- Parse User Parameters ---
         meshSizeMax = float(params.get('meshSizeMax', 5.0))
         meshSizeMin = float(params.get('meshSizeMin', 0.5))
-        growthRate = float(params.get('growthRate', 1.2))
         
         blEnabled = params.get('blEnabled', True)
         blFirstLayer = float(params.get('blFirstLayer', 0.05))
-        blGrowthRate = float(params.get('blGrowthRate', 1.2))
-        blNumLayers = int(params.get('blNumLayers', 5))
         
         wakeEnabled = params.get('wakeEnabled', True)
         wakeLength = float(params.get('wakeLength', 10.0))

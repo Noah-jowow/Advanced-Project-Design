@@ -17,9 +17,8 @@ if os.path.exists(mingw_bin):
 
 try:
     import radar_core
-    RADAR_CORE_AVAILABLE = True
 except ImportError:
-    RADAR_CORE_AVAILABLE = False
+    pass
 
 router = APIRouter()
 
@@ -31,7 +30,7 @@ class RadarRequest(BaseModel):
     fs: float = 125e6
     prf: float = 5000.0
 
-def radar_process_command(dsp, tracker, command, sim_data):
+def radar_process_command(dsp, tracker, env_sim, command, sim_data):
     """
     Process radar commands from WebSocket, mapping frontend parameters 
     to C++ RadarDSP and TrackerIMM functions.
@@ -61,17 +60,26 @@ def radar_process_command(dsp, tracker, command, sim_data):
         payload["elevation_cut"] = af_db[:, mid_col].tolist()
         
         # 2. Process CPI & CFAR
-        # Generate dummy RX matrix (Complex Double)
         num_pulses = 16
         num_samples = 512
         rx_mat = (np.random.randn(num_pulses, num_samples) + 
                   1j * np.random.randn(num_pulses, num_samples)).astype(np.complex128)
         
-        # Add a simulated target signature to the RX matrix
-        tgt_doppler = 5
-        tgt_range_bin = 256
-        for p in range(num_pulses):
-            rx_mat[p, tgt_range_bin] += 50.0 * np.exp(1j * 2 * np.pi * tgt_doppler * p / num_pulses)
+        # Inject true target signatures based on env_sim
+        targets = env_sim.getTargets()
+        c = 299792458.0
+        fs = 125e6
+        for tgt_id, tgt in targets.items():
+            r = np.linalg.norm(tgt.pos)
+            v_r = -np.dot(tgt.vel, tgt.pos) / max(1e-6, r)
+            f_d = 2 * v_r * freq / c
+            # Convert range to bin
+            bin_idx = int((2 * r / c) * fs)
+            if 0 <= bin_idx < num_samples:
+                # Basic injection (ignoring realistic SNR for now)
+                # We'll inject it with amplitude ~ 50.0
+                for p in range(num_pulses):
+                    rx_mat[p, bin_idx] += 50.0 * np.exp(1j * 2 * np.pi * f_d * p / prf)
 
         rd_mat = dsp.processCPI(rx_mat)
         rd_mag_sq = np.abs(rd_mat)**2
@@ -90,7 +98,6 @@ def radar_process_command(dsp, tracker, command, sim_data):
 
         # Fundamentals: SNR vs Range (simulated curve)
         ranges = np.linspace(1000, 20000, 100)
-        # Radar equation: SNR prop to 1/R^4
         pt = sim_data.get("pwr", 50.0) * 1e3
         snr_curve = 10 * np.log10((pt * 1e12) / (ranges**4 + 1e-1))
         payload["snr_range"] = snr_curve.tolist()
@@ -114,7 +121,6 @@ def radar_process_command(dsp, tracker, command, sim_data):
         # 4. STAP Covariance Matrix
         R_x = dsp.calculateSTAPCovariance(N, M, d, v, prf, freq, 40.0, jammerAz, jnr_db)
         payload["stap_covariance_norm"] = float(np.linalg.norm(R_x))
-        # Send absolute value of covariance for heatmap visualization (downsample if too large, but 256x256 is ~65k points, manageable)
         payload["stap_covariance"] = np.abs(R_x).tolist()
 
     elif command == "add_target":
@@ -127,12 +133,10 @@ def radar_process_command(dsp, tracker, command, sim_data):
         vy = sim_data.get("vy", 0.0)
         vz = sim_data.get("vz", 0.0)
         
-        # State: [x, y, z, vx, vy, vz, acc] (7D state as per TrackerIMM)
-        initial_state = np.array([x, y, z, vx, vy, vz, 0.01])
-        initial_cov = np.eye(7) * 10.0
-        
-        tracker.addTrack(id, initial_state, initial_cov)
-        payload["message"] = f"Track {id} added successfully."
+        # Add to EnvironmentSimulator instead of direct TrackerIMM
+        # Default to Airliner (10.0 rcs)
+        env_sim.addTarget(id, "Airliner", np.array([x, y, z]), np.array([vx, vy, vz]), 10.0, False, False)
+        payload["message"] = f"Track {id} added successfully to EnvironmentSimulator."
 
     return payload
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { PlotCard } from './PlotCard';
 
@@ -15,23 +15,47 @@ export function RadarPanel() {
   });
 
   const [activeTab, setActiveTab] = useState('fundamentals');
+  const [isSimulating, setIsSimulating] = useState(false);
+  
+  // Accumulate track history
+  const [trackHistory, setTrackHistory] = useState<{x: number[], y: number[], z: number[]}>({x: [], y: [], z: []});
 
-  const handleRun = () => {
-    sendCommand('scan', {
-      mode: params.mode,
-      freq: params.freq * 1e9,
-      pwr: params.pwr * 1e3,
-      tau: params.tau * 1e-6,
-      prf: params.prf,
-      bw: params.bw * 1e6,
-      Ny: params.ny,
-      Nz: params.nz,
-      taper: params.taper,
-      steerAz: params.az,
-      steerEl: params.el,
-      steerType: params.steerType
-    });
-  };
+  useEffect(() => {
+    if (data?.track_history_x && data?.track_history_y && data?.track_history_z) {
+      // eslint-disable-next-line
+      setTrackHistory(prev => {
+        const nx = [...prev.x, data.track_history_x[0]].slice(-500); // keep last 500
+        const ny = [...prev.y, data.track_history_y[0]].slice(-500);
+        const nz = [...prev.z, data.track_history_z[0]].slice(-500);
+        return { x: nx, y: ny, z: nz };
+      });
+    }
+  }, [data?.track_history_x, data?.track_history_y, data?.track_history_z]);
+
+  // Responsive polling mechanism to simulate real-time engine
+  useEffect(() => {
+    if (isSimulating && status === 'CONNECTED') {
+      const timer = setTimeout(() => {
+        sendCommand('scan', {
+          mode: params.mode,
+          freq: params.freq * 1e9,
+          pwr: params.pwr * 1e3,
+          tau: params.tau * 1e-6,
+          prf: params.prf,
+          bw: params.bw * 1e6,
+          Ny: params.ny,
+          Nz: params.nz,
+          taper: params.taper,
+          steerAz: params.az,
+          steerEl: params.el,
+          steerType: params.steerType
+        });
+      }, 250); // ~4 fps tick rate (avoids Plotly/WebGL memory crash)
+      return () => clearTimeout(timer);
+    }
+  }, [isSimulating, data, status, params, sendCommand]);
+
+
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -147,6 +171,24 @@ export function RadarPanel() {
                 <input type="number" name="el" value={params.el} onChange={handleChange} />
               </div>
             </div>
+            
+            <button 
+              className="mt-4 w-full px-4 py-2 bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/50 rounded hover:bg-accent-cyan/30 font-bold uppercase tracking-wider transition-colors"
+              onClick={() => {
+                const Rmax = 20000;
+                const c = 299792458;
+                const idealPrf = Math.floor(c / (2 * Rmax));
+                const idealBw = 50; 
+                setParams(prev => ({
+                  ...prev,
+                  prf: Math.min(idealPrf, 10000),
+                  bw: idealBw,
+                  pwr: 100
+                }));
+              }}
+            >
+              Auto-Optimize Parameters
+            </button>
           </div>
         </div>
 
@@ -174,7 +216,7 @@ export function RadarPanel() {
             <button 
               onClick={() => {
                 sendCommand('add_target', { 
-                  id: Date.now(), 
+                  id: Math.floor(Math.random() * 1000000), 
                   x: tgtParams.x, y: tgtParams.y, z: tgtParams.z, 
                   vx: tgtParams.vx, vy: 0, vz: 0 
                 });
@@ -187,8 +229,16 @@ export function RadarPanel() {
         </div>
 
         <div className="mt-auto pt-4">
-          <button onClick={handleRun} disabled={status !== 'CONNECTED'} className="btn-primary">
-            EXECUTE SCAN
+          <button 
+            onClick={() => setIsSimulating(!isSimulating)} 
+            disabled={status !== 'CONNECTED'} 
+            className={`w-full py-3 rounded-lg font-bold transition-all ${
+              isSimulating 
+                ? 'bg-red-500/80 hover:bg-red-500 text-white border border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.3)]'
+                : 'btn-primary'
+            }`}
+          >
+            {isSimulating ? '■ STOP SIMULATION' : '▶ RUN SIMULATION'}
           </button>
         </div>
       </aside>
@@ -291,22 +341,22 @@ export function RadarPanel() {
             <div className="card p-2 col-span-1 row-span-2">
               <PlotCard 
                 title="IMM Tracker Airspace (3D Trace)" 
-                data={data?.track_history_x ? [
+                data={trackHistory.x.length > 0 ? [
                   {
-                    x: data.track_history_x as number[], y: data.track_history_y as number[], z: data.track_history_z as number[],
+                    x: trackHistory.x, y: trackHistory.y, z: trackHistory.z,
                     mode: 'lines+markers', type: 'scatter3d', name: 'Target Trajectory',
                     line: { color: '#FF453A', width: 4 }, marker: { size: 4, color: '#FFD60A' }
                   },
-                  ...(data.ellipsoid_x ? [{
-                    x: data.ellipsoid_x, y: data.ellipsoid_y, z: data.ellipsoid_z,
+                  ...(data?.ellipsoid_x ? [{
+                    x: data?.ellipsoid_x, y: data?.ellipsoid_y, z: data?.ellipsoid_z,
                     type: 'mesh3d', alphahull: 0, opacity: 0.15, color: '#0A84FF', name: 'Covariance'
                   }] : [])
                 ] : []}
                 layout={{
                   scene: {
-                    xaxis: { title: 'X (m)', gridcolor: '#2c2c2e' },
-                    yaxis: { title: 'Y (m)', gridcolor: '#2c2c2e' },
-                    zaxis: { title: 'Altitude (m)', gridcolor: '#2c2c2e' },
+                    xaxis: { title: 'X (m)', range: [-10000, 10000], gridcolor: '#2c2c2e' },
+                    yaxis: { title: 'Y (m)', range: [-10000, 10000], gridcolor: '#2c2c2e' },
+                    zaxis: { title: 'Altitude (m)', range: [0, 10000], gridcolor: '#2c2c2e' },
                     camera: { eye: { x: 1.5, y: -1.5, z: 1.2 } }
                   }
                 }}
@@ -320,7 +370,13 @@ export function RadarPanel() {
                   theta: Array.from({length: data.rd_matrix[0].length}, () => params.az),
                   mode: 'markers', type: 'scatterpolar', marker: { size: 8, color: '#32D74B' }
                 }] : []}
-                layout={{ polar: { angularaxis: { rotation: 90, direction: 'clockwise', gridcolor: '#2c2c2e' }, radialaxis: { gridcolor: '#2c2c2e' } } }}
+                layout={{ 
+                  polar: { 
+                    bgcolor: '#001500',
+                    angularaxis: { rotation: 90, direction: 'clockwise', gridcolor: '#004400', linecolor: '#004400' }, 
+                    radialaxis: { gridcolor: '#00ff00', linecolor: '#00ff00', range: [0, 20000] } 
+                  } 
+                }}
               />
             </div>
             <div className="card p-2">
@@ -328,7 +384,7 @@ export function RadarPanel() {
                 title="EW Jammer Spectral Environment" 
                 data={data?.stap_weights ? [{
                   x: Array.from({length: data.stap_weights.length}, (_, i) => i),
-                  y: data.stap_weights.map(w => {
+                  y: data.stap_weights.map((w: string) => {
                     const match = w.match(/\(([^,]+),([^)]+)\)/);
                     if (match) return Math.sqrt(Math.pow(parseFloat(match[1]), 2) + Math.pow(parseFloat(match[2]), 2));
                     return 0;
@@ -377,45 +433,79 @@ export function RadarPanel() {
         )}
 
         {activeTab === 'c2' && (
-          <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0">
-            <div className="card p-2 flex items-center justify-center">
-              <PlotCard 
-                title="Dual-Pol Signature Classification" 
-                data={[{
-                  x: ['HH', 'HV', 'VV', 'VH'], y: [0.8, 0.2, 0.9, 0.3], type: 'bar', marker: { color: ['#0A84FF', '#FF453A', '#32D74B', '#FFD60A'] }
-                }]}
-                layout={{ xaxis: { gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e', range: [0, 1] } }}
-              />
+          <div className="flex-1 flex flex-col gap-6 min-h-0 overflow-y-auto">
+            {/* Operator Table */}
+            <div className="card p-4 shrink-0">
+              <div className="panel-title mb-4">C2 Operator Tracks</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="text-text-secondary border-b border-border/50">
+                    <tr>
+                      <th className="pb-2 font-semibold">Trk ID</th>
+                      <th className="pb-2 font-semibold">SNR (dB)</th>
+                      <th className="pb-2 font-semibold">Shape</th>
+                      <th className="pb-2 font-semibold">Class Est.</th>
+                      <th className="pb-2 font-semibold">HH (m²)</th>
+                      <th className="pb-2 font-semibold">VV (m²)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30 font-mono">
+                    {data?.c2_measurements?.map((m: {id: number, snr_db: number, pol: number[]}) => {
+                      const r = m.pol[0] / Math.max(1e-6, m.pol[1]);
+                      let shape = 'Symmetric';
+                      if (r > 2.0) shape = 'Horizontal';
+                      else if (r < 0.5) shape = 'Vertical';
+                      
+                      let cls;
+                      if (r > 2.0) cls = 'Airliner';
+                      else if (r > 0.5 && r < 2.0) cls = 'Stealth/UAV';
+                      else cls = 'Missile';
+
+                      return (
+                        <tr key={m.id} className="hover:bg-white/5 transition-colors">
+                          <td className="py-2 text-accent-cyan">Trk-{m.id}</td>
+                          <td className="py-2">{m.snr_db.toFixed(1)}</td>
+                          <td className="py-2">{shape}</td>
+                          <td className="py-2 font-bold">{cls}</td>
+                          <td className="py-2 text-blue-400">{m.pol[0].toFixed(2)}</td>
+                          <td className="py-2 text-green-400">{m.pol[1].toFixed(2)}</td>
+                        </tr>
+                      );
+                    }) || (
+                      <tr>
+                        <td colSpan={6} className="py-4 text-center text-text-secondary">No tracks detected or simulating...</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div className="card p-2 flex items-center justify-center">
-              <PlotCard 
-                title="RCS Silhouette Estimate" 
-                data={[{
-                  r: [10, 12, 15, 12, 10, 8, 10], theta: [0, 60, 120, 180, 240, 300, 360],
-                  mode: 'lines', type: 'scatterpolar', fill: 'toself', line: { color: '#0A84FF' }, fillcolor: 'rgba(10, 132, 255, 0.3)'
-                }]}
-                layout={{ polar: { angularaxis: { gridcolor: '#2c2c2e' }, radialaxis: { gridcolor: '#2c2c2e', range: [0, 20] } } }}
-              />
-            </div>
-            <div className="card p-2 flex items-center justify-center">
-              <PlotCard 
-                title="Filter Range Error (m)" 
-                data={data?.track_history_x ? [{
-                  y: data.track_history_x.map((_, i) => Math.sin(i * 0.5) * 5),
-                  mode: 'lines', line: { color: '#FFD60A', width: 2 }
-                }] : []}
-                layout={{ xaxis: { title: 'Time step', gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e' } }}
-              />
-            </div>
-            <div className="card p-2 flex items-center justify-center">
-              <PlotCard 
-                title="Filter Velocity Error (m/s)" 
-                data={data?.track_history_x ? [{
-                  y: data.track_history_x.map((_, i) => Math.cos(i * 0.7) * 2),
-                  mode: 'lines', line: { color: '#FF453A', width: 2 }
-                }] : []}
-                layout={{ xaxis: { title: 'Time step', gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e' } }}
-              />
+
+            {/* Graphs */}
+            <div className="grid grid-cols-2 gap-6 min-h-[300px]">
+              <div className="card p-2 flex flex-col">
+                <PlotCard 
+                  title="Dual-Pol Signature Classification (Primary Track)" 
+                  data={data?.c2_measurements?.length ? [{
+                    x: ['HH', 'VV', 'HV'], 
+                    y: [data.c2_measurements[0].pol[0], data.c2_measurements[0].pol[1], data.c2_measurements[0].pol[2]], 
+                    type: 'bar', 
+                    marker: { color: ['#0A84FF', '#32D74B', '#FF453A'] }
+                  }] : []}
+                  layout={{ xaxis: { gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e', title: 'RCS (m²)' } }}
+                />
+              </div>
+              
+              <div className="card p-2 flex flex-col">
+                <PlotCard 
+                  title="Filter Range Error (m)" 
+                  data={data?.track_history_x ? [{
+                    y: data.track_history_x.map((_: unknown, i: number) => Math.sin(i * 0.5) * 5), // Keep fake error for now or remove
+                    mode: 'lines', line: { color: '#FFD60A', width: 2 }
+                  }] : []}
+                  layout={{ xaxis: { title: 'Time step', gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e' } }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -427,7 +517,7 @@ export function RadarPanel() {
                 title="Hexapod Dynamics (Newton-Euler)" 
                 data={data?.hex_tp ? [
                   {
-                    x: data.hex_base[0] as number[], y: data.hex_base[1] as number[], z: [0,0,0,0,0,0],
+                    x: data?.hex_base?.[0] as number[], y: data?.hex_base?.[1] as number[], z: [0,0,0,0,0,0],
                     mode: 'markers', type: 'scatter3d', name: 'Base', marker: { size: 6, color: '#32D74B' }
                   },
                   {

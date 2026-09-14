@@ -1,15 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 import asyncio
-import json
-import random
 import sys
 import numpy as np
-import concurrent.futures
 import multiprocessing
 from api_gateway import mesher
 
@@ -26,15 +21,14 @@ app.add_middleware(
 # --- WebSocket Infrastructure ---
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: list[WebSocket] = []
+        self.active_connections: set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections.add(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections.discard(websocket)
 
     async def send_json(self, data: dict, websocket: WebSocket):
         await websocket.send_json(data)
@@ -135,12 +129,12 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
             dsp = radar_core.RadarDSP(16, 512)
             dsp.generateMatchedFilter(1e6, 1e-5, 10e6)
             tracker = radar_core.TrackerIMM()
-            # Initialize a track at (1000, 100, 5000)
-            initial_state = np.array([1000.0, 100.0, 5000.0, 300.0, 0.1, 0.0, 0.01])
-            initial_cov = np.eye(7) * 10.0
-            tracker.addTrack(1, initial_state, initial_cov)
             pointer_dyn = radar_core.PointerDynamics()
+            env_sim = radar_core.EnvironmentSimulator()
+            
             t_last = asyncio.get_event_loop().time()
+            radar_origin_pos = np.zeros(3)
+            radar_origin_vel = np.zeros(3)
 
         
         if domain == "aero" and AERO_AVAILABLE:
@@ -153,7 +147,6 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
             
         if domain == "prop" and PROP_AVAILABLE:
             opt = prop_core.NozzleOptimizer()
-            altitude_idx = 0
             
         while True:
             try:
@@ -168,78 +161,120 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                     "data": {}
                 }
                 
-                if domain == "radar" and command == "scan" and RADAR_AVAILABLE:
+                if domain == "radar" and RADAR_AVAILABLE:
                     # Extract from nested 'data' object
                     sim_data = data.get("data", {})
                     
-                    # Use the delegated radar processor from radar_router.py
-                    radar_results = radar_process_command(dsp, tracker, command, sim_data)
-                    payload["data"].update(radar_results)
+                    if command in ["scan", "add_target"]:
+                        # Use the delegated radar processor from radar_router.py
+                        radar_results = radar_process_command(dsp, tracker, env_sim, command, sim_data)
+                        payload["data"].update(radar_results)
                     
-                    # Update Tracker
-                    t_now = asyncio.get_event_loop().time()
-                    dt = t_now - t_last
-                    t_last = t_now
-                    # Simulated measurement with noise
-                    meas = np.array([1000.0 + random.uniform(-5, 5), 100.0 + random.uniform(-5, 5), 5000.0 + random.uniform(-2, 2)])
-                    tracker.update(1, meas, np.eye(3) * 5.0, dt)
-                    
-                    estimates = tracker.getMultiTrackEstimates()
-                    if 1 in estimates:
-                        est = estimates[1]
-                        payload["data"]["track_history_x"] = [est[0]]
-                        payload["data"]["track_history_y"] = [est[1]]
-                        payload["data"]["track_history_z"] = [est[2]]
+                    if command == "scan":
+                        # Update Environment and Tracker
+                        t_now = asyncio.get_event_loop().time()
+                        dt = t_now - t_last
+                        t_last = t_now
                         
-                        # Generate Covariance Ellipsoid Point Cloud
-                        try:
-                            cov = tracker.getCovariance(1)
-                            # Extract the 3x3 spatial covariance
-                            P_xyz = cov[:3, :3]
-                            # Decompose to generate points
-                            U, s, _ = np.linalg.svd(P_xyz)
-                            L = U @ np.diag(np.sqrt(s))
+                        env_sim.step(dt, t_now)
+                        
+                        rp = radar_core.RadarParams()
+                        rp.freq = sim_data.get("freq", 10e9)
+                        rp.pt = sim_data.get("pwr", 50.0) * 1000.0
+                        rp.tau = sim_data.get("tau", 10e-6)
+                        rp.prf = sim_data.get("prf", 5000.0)
+                        rp.bw = sim_data.get("bw", 50e6)
+                        rp.tx_ny = sim_data.get("Ny", 16)
+                        rp.tx_nz = sim_data.get("Nz", 16)
+                        rp.rx_ny = sim_data.get("Ny", 16)
+                        rp.rx_nz = sim_data.get("Nz", 16)
+                        rp.ge = np.power(10, 30.0/10.0) # Assume 30 dB
+                        
+                        steerAz = sim_data.get("steerAz", 45.0)
+                        steerEl = sim_data.get("steerEl", 15.0)
+                        
+                        measurements = env_sim.generateMeasurements(rp, radar_origin_pos, radar_origin_vel, steerAz, steerEl)
+                        
+                        c2_data = []
+                        for tgt_id, meas in measurements.items():
+                            if meas.detected:
+                                true_t = env_sim.getTargets().get(tgt_id)
+                                if true_t and not tracker.hasTrack(tgt_id):
+                                    init_s = np.array([true_t.pos[0], true_t.pos[1], true_t.pos[2], true_t.vel[0], 0.0, true_t.vel[2], 0.01])
+                                    tracker.addTrack(tgt_id, init_s, np.eye(7)*10.0)
+                                
+                                # TrackerIMM expects radians for Az, El
+                                r_meas = meas.sph_meas[0]
+                                a_meas = meas.sph_meas[1] * np.pi / 180.0
+                                e_meas = meas.sph_meas[2] * np.pi / 180.0
+                                
+                                R_cov = np.diag([10.0, 0.01, 0.01])
+                                tracker.update(tgt_id, np.array([r_meas, a_meas, e_meas]), R_cov, dt)
+                                
+                                c2_data.append({
+                                    "id": tgt_id,
+                                    "snr_db": meas.snr_db,
+                                    "pol": meas.pol_hh_vv_hv.tolist()
+                                })
+                        
+                        payload["data"]["c2_measurements"] = c2_data
+                        
+                        estimates = tracker.getMultiTrackEstimates()
+                        if 1 in estimates:
+                            est = estimates[1]
+                            payload["data"]["track_history_x"] = [est[0]]
+                            payload["data"]["track_history_y"] = [est[1]]
+                            payload["data"]["track_history_z"] = [est[2]]
                             
-                            # Standard normal sphere points
-                            u_theta = np.linspace(0, 2 * np.pi, 20)
-                            v_phi = np.linspace(0, np.pi, 20)
-                            x_sphere = np.outer(np.cos(u_theta), np.sin(v_phi)).flatten()
-                            y_sphere = np.outer(np.sin(u_theta), np.sin(v_phi)).flatten()
-                            z_sphere = np.outer(np.ones_like(u_theta), np.cos(v_phi)).flatten()
-                            sphere_pts = np.vstack((x_sphere, y_sphere, z_sphere))
-                            
-                            # Scale and translate
-                            # Plotting the 3-sigma ellipsoid (scale by 3)
-                            ellipsoid = (L @ (sphere_pts * 3.0)).T
-                            ex = ellipsoid[:, 0] + est[0]
-                            ey = ellipsoid[:, 1] + est[1]
-                            ez = ellipsoid[:, 2] + est[2]
-                            
-                            payload["data"]["ellipsoid_x"] = ex.tolist()
-                            payload["data"]["ellipsoid_y"] = ey.tolist()
-                            payload["data"]["ellipsoid_z"] = ez.tolist()
-                        except Exception as e:
-                            print(f"Ellipsoid Generation Error: {e}")
+                            # Generate Covariance Ellipsoid Point Cloud
+                            try:
+                                cov = tracker.getCovariance(1)
+                                # Extract the 3x3 spatial covariance
+                                P_xyz = cov[:3, :3]
+                                # Decompose to generate points
+                                U, s, _ = np.linalg.svd(P_xyz)
+                                L = U @ np.diag(np.sqrt(s))
+                                
+                                # Standard normal sphere points
+                                u_theta = np.linspace(0, 2 * np.pi, 20)
+                                v_phi = np.linspace(0, np.pi, 20)
+                                x_sphere = np.outer(np.cos(u_theta), np.sin(v_phi)).flatten()
+                                y_sphere = np.outer(np.sin(u_theta), np.sin(v_phi)).flatten()
+                                z_sphere = np.outer(np.ones_like(u_theta), np.cos(v_phi)).flatten()
+                                sphere_pts = np.vstack((x_sphere, y_sphere, z_sphere))
+                                
+                                # Scale and translate
+                                # Plotting the 3-sigma ellipsoid (scale by 3)
+                                ellipsoid = (L @ (sphere_pts * 3.0)).T
+                                ex = ellipsoid[:, 0] + est[0]
+                                ey = ellipsoid[:, 1] + est[1]
+                                ez = ellipsoid[:, 2] + est[2]
+                                
+                                payload["data"]["ellipsoid_x"] = ex.tolist()
+                                payload["data"]["ellipsoid_y"] = ey.tolist()
+                                payload["data"]["ellipsoid_z"] = ez.tolist()
+                            except Exception as e:
+                                print(f"Ellipsoid Generation Error: {e}")
 
-                        # Update Pointer Dynamics
-                        try:
-                            target_pos = np.array([est[0], est[1], est[2]])
-                            hex_state = pointer_dyn.stepHexapod(target_pos, dt)
-                            azel_state = pointer_dyn.stepAzEl(target_pos, dt)
-                            
-                            payload["data"]["hex_tp"] = hex_state.TP.tolist()
-                            payload["data"]["hex_base"] = pointer_dyn.getHexBase().tolist()
-                            payload["data"]["hex_laser"] = hex_state.laser_vec.tolist()
-                            payload["data"]["hex_forces"] = hex_state.Fa.tolist()
-                            payload["data"]["hex_warn"] = hex_state.warning_state
-                            payload["data"]["hex_cond"] = hex_state.cond_J
-                            
-                            payload["data"]["azel_q"] = azel_state.q.tolist()
-                            payload["data"]["azel_tau_a"] = azel_state.tau_a
-                            payload["data"]["azel_tau_e"] = azel_state.tau_e
-                            payload["data"]["azel_warn"] = azel_state.warning_state
-                        except Exception as e:
-                            print(f"Pointer Dynamics Error: {e}")
+                            # Update Pointer Dynamics
+                            try:
+                                target_pos = np.array([est[0], est[1], est[2]])
+                                hex_state = pointer_dyn.stepHexapod(target_pos, dt)
+                                azel_state = pointer_dyn.stepAzEl(target_pos, dt)
+                                
+                                payload["data"]["hex_tp"] = hex_state.TP.tolist()
+                                payload["data"]["hex_base"] = pointer_dyn.getHexBase().tolist()
+                                payload["data"]["hex_laser"] = hex_state.laser_vec.tolist()
+                                payload["data"]["hex_forces"] = hex_state.Fa.tolist()
+                                payload["data"]["hex_warn"] = hex_state.warning_state
+                                payload["data"]["hex_cond"] = hex_state.cond_J
+                                
+                                payload["data"]["azel_q"] = azel_state.q.tolist()
+                                payload["data"]["azel_tau_a"] = azel_state.tau_a
+                                payload["data"]["azel_tau_e"] = azel_state.tau_e
+                                payload["data"]["azel_warn"] = azel_state.warning_state
+                            except Exception as e:
+                                print(f"Pointer Dynamics Error: {e}")
 
                     
                 elif domain == "aero" and command == "preview_geometry":
@@ -526,12 +561,15 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
             except WebSocketDisconnect:
                 break
             except RuntimeError as e:
-                # Handle cases where websocket is already closed/disconnected
+                import traceback
+                print(f"[SYSTEM] RuntimeError trace: {traceback.format_exc()}")
                 if "accept" in str(e).lower() or "close" in str(e).lower():
                     break
                 print(f"WebSocket command error: {e}")
             except Exception as e:
                 # Handle disconnects or bad messages gracefully
+                import traceback
+                print(f"[SYSTEM] Detailed Error trace: {traceback.format_exc()}")
                 if "disconnect" in str(e).lower() or "close" in str(e).lower():
                     break
                 print(f"[SYSTEM] WebSocket command error in domain {domain}: {e}")
@@ -546,9 +584,10 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                     pass
                 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
     except Exception as e:
         print(f"WebSocket Error: {e}")
+    finally:
         manager.disconnect(websocket)
 
 

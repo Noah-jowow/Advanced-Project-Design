@@ -102,9 +102,17 @@ export interface RadarData {
   azel_tau_a?: number;
   azel_tau_e?: number;
   azel_warn?: string;
+
+  // C2 Analytics
+  c2_measurements?: {
+    id: number;
+    snr_db: number;
+    pol: number[];
+  }[];
 }
 
 // Propulsion Specific Types
 export type PropulsionData = Record<string, unknown>;
 
-export type SimulationPayload = Record<string, unknown>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SimulationPayload = Record<string, any>;
