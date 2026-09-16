@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { PlotCard } from './PlotCard';
 
 export function RadarPanel() {
-  const { status, data, sendCommand } = useWebSocket('radar');
+  const { status, data, logs, sendCommand } = useWebSocket('radar');
   
   const [params, setParams] = useState({
     mode: 1, freq: 10.0, pwr: 50.0, tau: 10.0, prf: 5000, bw: 50,
@@ -16,6 +16,14 @@ export function RadarPanel() {
 
   const [activeTab, setActiveTab] = useState('fundamentals');
   const [isSimulating, setIsSimulating] = useState(false);
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (terminalExpanded && terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, terminalExpanded]);
   
   // Accumulate track history
   const [trackHistory, setTrackHistory] = useState<{x: number[], y: number[], z: number[]}>({x: [], y: [], z: []});
@@ -72,22 +80,25 @@ export function RadarPanel() {
   ];
 
   return (
-    <div className="grid grid-cols-[360px_1fr] h-full w-full gap-6 p-6">
+    <div className="flex flex-col h-full w-full overflow-hidden">
       
-      {/* Sidebar Controls (Glass Panel) */}
-      <aside className="glass-panel overflow-y-auto flex flex-col p-6 gap-6">
-        {/* Connection Status Header */}
-        <div className="flex items-center justify-between pb-5 border-b border-border/50">
-          <div className="flex items-center gap-3">
-            <div className={`status-indicator ${
-              status === 'CONNECTED' ? 'status-connected' : 
-              status === 'CONNECTING' ? 'status-connecting' : 'status-disconnected'
-            }`} />
-            <span className="text-xs font-bold text-text-secondary uppercase tracking-widest">
-              {status === 'CONNECTED' ? 'Data Link Active' : 'Offline'}
-            </span>
+      {/* Main Work Area: Sidebar Controls + Viewport */}
+      <div className="flex-1 grid grid-cols-[360px_1fr] gap-6 p-6 pb-2 min-h-0 overflow-hidden">
+        
+        {/* Sidebar Controls (Glass Panel) */}
+        <aside className="glass-panel overflow-y-auto flex flex-col p-6 gap-6 h-full min-h-0">
+          {/* Connection Status Header */}
+          <div className="flex items-center justify-between pb-5 border-b border-border/50 shrink-0">
+            <div className="flex items-center gap-3">
+              <div className={`status-indicator ${
+                status === 'CONNECTED' ? 'status-connected' : 
+                status === 'CONNECTING' ? 'status-connecting' : 'status-disconnected'
+              }`} />
+              <span className="text-xs font-bold text-text-secondary uppercase tracking-widest">
+                {status === 'CONNECTED' ? 'Data Link Active' : 'Offline'}
+              </span>
+            </div>
           </div>
-        </div>
 
         {/* Form Controls */}
         <div>
@@ -228,7 +239,7 @@ export function RadarPanel() {
           </div>
         </div>
 
-        <div className="mt-auto pt-4">
+        <div className="mt-auto pt-4 shrink-0">
           <button 
             onClick={() => setIsSimulating(!isSimulating)} 
             disabled={status !== 'CONNECTED'} 
@@ -244,23 +255,58 @@ export function RadarPanel() {
       </aside>
 
       {/* Main Viewport */}
-      <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+      <div className="flex flex-col h-full min-h-0 overflow-hidden bg-black/40 rounded-xl border border-border">
         
-        {/* Tab Navigation (Glass) */}
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {tabs.map(t => (
-            <button 
-              key={t.id}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-300 border whitespace-nowrap ${activeTab === t.id ? 'bg-surface-hover border-border-strong text-text-primary shadow-lg' : 'bg-surface border-border/50 text-text-secondary hover:text-text-primary hover:bg-white/[0.05]'}`}
-              onClick={() => setActiveTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        
-        {activeTab === 'fundamentals' && (
-          <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0">
+        {/* Progress Bar */}
+        {isSimulating && (
+          <div className="w-full h-1 bg-border rounded-full overflow-hidden shrink-0">
+            <div className="h-full bg-accent-cyan rounded-full animate-pulse" style={{ width: '100%', animation: 'progress-slide 1.2s ease-in-out infinite' }} />
+          </div>
+        )}
+
+        <div className="p-4 flex-1 flex flex-col gap-4 overflow-hidden min-h-0">
+          {/* Header with Tabs and Live Telemetry Badges */}
+          <div className="flex justify-between items-center border-b border-border pb-3 shrink-0">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {tabs.map(t => (
+                <button 
+                  key={t.id}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all duration-300 border whitespace-nowrap ${activeTab === t.id ? 'bg-surface-hover border-border-strong text-text-primary shadow-lg' : 'bg-surface border-border/50 text-text-secondary hover:text-text-primary hover:bg-white/[0.05]'}`}
+                  onClick={() => setActiveTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Live Telemetry KPI Badges */}
+            <div className="flex items-center gap-3 text-xs font-mono shrink-0">
+              <div className="bg-surface px-3 py-1 rounded-lg border border-border/50 flex items-center gap-2">
+                <span className="text-text-secondary">DSP:</span>
+                <span className={isSimulating ? 'text-accent-green font-bold animate-pulse' : 'text-text-secondary'}>
+                  {isSimulating ? 'TRANSMITTING' : 'STANDBY'}
+                </span>
+              </div>
+              <div className="bg-surface px-3 py-1 rounded-lg border border-border/50 flex items-center gap-2">
+                <span className="text-text-secondary">Freq:</span>
+                <span className="text-accent-cyan font-bold">{params.freq} GHz</span>
+              </div>
+              <div className="bg-surface px-3 py-1 rounded-lg border border-border/50 flex items-center gap-2">
+                <span className="text-text-secondary">PRF:</span>
+                <span className="text-text-primary font-bold">{params.prf} Hz</span>
+              </div>
+              <div className="bg-surface px-3 py-1 rounded-lg border border-border/50 flex items-center gap-2">
+                <span className="text-text-secondary">Detections:</span>
+                <span className="text-accent-green font-bold">
+                  {data?.cfar_detections ? (data.cfar_detections as number[][]).flat().filter(Boolean).length : 0}
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {activeTab === 'fundamentals' && (
+              <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0 h-full">
             <div className="card p-2">
               <PlotCard 
                 title="SNR vs Range (Radar Equation)" 
@@ -584,7 +630,59 @@ export function RadarPanel() {
           </div>
         )}
 
+            </div>
+          </div>
+        </div>
+
       </div>
+
+      {/* Docked Telemetry Terminal (Bottom of Workbench) */}
+      <div className="w-full bg-[#0d1117] border-t border-border flex flex-col shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.6)] z-30">
+        <div 
+          className="px-6 py-2.5 flex items-center justify-between cursor-pointer hover:bg-[#161b22] transition-colors font-mono text-xs text-gray-300"
+          onClick={() => setTerminalExpanded(!terminalExpanded)}
+        >
+          <div className="flex items-center gap-3 truncate">
+            <span className="text-accent-cyan font-bold flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-accent-green animate-pulse"></span>
+              RADAR TELEMETRY & DSP LOGS
+            </span>
+            <span className="text-gray-600">|</span>
+            <span className="truncate text-gray-400 font-mono text-[11px]">
+              {logs.length > 0 ? logs[logs.length - 1].message : "Awaiting radar server telemetry..."}
+            </span>
+          </div>
+          <div className="shrink-0 flex items-center gap-3 text-gray-400 text-xs">
+            <span className="text-[11px] bg-white/5 px-2 py-0.5 rounded border border-white/10 font-mono">{logs.length} logs</span>
+            <span className="text-accent-cyan font-semibold hover:text-white transition-colors">{terminalExpanded ? '▼ Collapse Terminal' : '▲ Expand Terminal'}</span>
+          </div>
+        </div>
+        
+        {terminalExpanded && (
+          <div className="h-56 overflow-y-auto px-6 py-3 font-mono text-[11px] border-t border-[#30363d] flex flex-col gap-1.5 bg-[#0a0c10]">
+            {logs.map((log, i) => (
+              <div key={i} className="flex gap-4 hover:bg-white/5 p-1 rounded leading-relaxed">
+                <span className="text-gray-500 shrink-0">[{log.timestamp}]</span>
+                <span className={
+                  log.message.includes('[SYSTEM]') ? 'text-accent-cyan font-medium' : 
+                  log.message.includes('[RADAR_DSP]') ? 'text-accent-green font-medium' : 
+                  log.message.includes('[RADAR_TRACK]') ? 'text-[#58a6ff] font-medium' : 
+                  log.message.includes('[RADAR_PARAMS]') ? 'text-[#e3b341] font-medium' : 
+                  log.message.includes('[RADAR_GIMBAL]') ? 'text-[#d2a8ff] font-medium' : 
+                  log.message.includes('[CLIENT_TX]') ? 'text-[#a371f7] font-medium' : 
+                  log.message.includes('[CLIENT_RX]') ? 'text-[#3fb950] font-medium' : 
+                  log.message.includes('Error') || log.message.includes('warn') ? 'text-accent-red font-bold' : 
+                  'text-gray-300'
+                }>
+                  {log.message}
+                </span>
+              </div>
+            ))}
+            <div ref={terminalEndRef} />
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }

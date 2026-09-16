@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api_gateway.optimization import optimize_nozzle
 import sys
 import os
 
@@ -62,32 +63,96 @@ async def optimize_expansion(req: OptimizationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def prop_process_command(data: dict, opt) -> dict:
+async def prop_process_command(data: dict, opt=None, manager=None, websocket=None) -> dict:
     import asyncio
+    import queue
+    
     command = data.get("command")
     if command == "optimize":
         sim_data = data.get("data", {})
-        thrust = sim_data.get("thrust", 50000.0)
-        pa = sim_data.get("pa", 101325.0)
-        prop_idx = sim_data.get("prop", 0)
-        mat_idx = sim_data.get("mat", 0)
-        gens = sim_data.get("gens", 10)
-        pc_min = sim_data.get("pcMin", 1e6)
-        pc_max = sim_data.get("pcMax", 21e6)
-        tw_min = sim_data.get("twMin", 0.001)
-        tw_max = sim_data.get("twMax", 0.011)
+        thrust = float(sim_data.get("thrust", 50000.0))
+        pa = float(sim_data.get("pa", 101325.0))
+        prop_idx = int(sim_data.get("prop", 0))
+        mat_idx = int(sim_data.get("mat", 0))
+        num_angles = int(sim_data.get("angles", 20))
         
         loop = asyncio.get_event_loop()
-        res = await loop.run_in_executor(None, opt.optimize, prop_idx, mat_idx, thrust, pa, gens, pc_min, pc_max, tw_min, tw_max)
+        msg_queue = queue.Queue()
+        
+        def thread_log(msg: str):
+            msg_queue.put({"type": "log", "msg": msg})
+            
+        def thread_telemetry(t_data: dict):
+            msg_queue.put({"type": "telemetry", "data": t_data})
+            
+        async def poll_stream():
+            while True:
+                try:
+                    while not msg_queue.empty():
+                        item = msg_queue.get_nowait()
+                        if item == "DONE":
+                            return
+                        if item["type"] == "log" and manager and websocket:
+                            await manager.log(item["msg"], websocket)
+                        elif item["type"] == "telemetry" and manager and websocket:
+                            await manager.send_json({
+                                "domain": "prop",
+                                "type": "result",
+                                "data": item["data"]
+                            }, websocket)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)
+                
+        poll_task = asyncio.create_task(poll_stream())
+        
+        try:
+            res = await loop.run_in_executor(
+                None,
+                optimize_nozzle,
+                prop_idx,
+                mat_idx,
+                thrust,
+                pa,
+                num_angles,
+                thread_log,
+                thread_telemetry,
+                sim_data
+            )
+        finally:
+            msg_queue.put("DONE")
+            await poll_task
         
         return {
-            "geometry_x": res.x.tolist(),
-            "geometry_y": res.y.tolist(),
-            "mach_dist": res.mach.tolist(),
-            "temp": res.temperature.tolist(),
-            "t_hw": res.T_hw.tolist(),
-            "margin_of_safety": res.margin_of_safety.tolist(),
-            "isp": res.Isp_true,
-            "mos": res.MoS
+            "status": "completed",
+            "geometry_x": res["x"],
+            "geometry_y": res["y"],
+            "mach_dist": res["mach"],
+            "temp": res["temperature"],
+            "t_hw": res["T_hw"],
+            "margin_of_safety": res["margin_of_safety"],
+            "q_flux": res.get("q_flux", []),
+            "delta_p_cool_dist": res.get("delta_p_cool_dist", []),
+            "delta_star": res.get("delta_star", []),
+            "isp": res["Isp_true"],
+            "thrust_delivered": res.get("thrust_delivered", thrust),
+            "mos": res["MoS"],
+            "mass": res["mass"],
+            "epsilon": res["epsilon_geom"],
+            "epsilon_eff": res.get("epsilon_eff", res["epsilon_geom"]),
+            "delta_exit": res.get("delta_exit", 0.0),
+            "lambda_div": res.get("lambda_div", 1.0),
+            "delta_p_cool": res.get("delta_p_cool", 0.0),
+            "q_max": res.get("q_max", 0.0),
+            "t_hw_max": res.get("T_hw_max", 0.0),
+            "pc": res["Pc"],
+            "t_w": res["t_w"],
+            "max_length": res.get("max_length", 2.5),
+            "max_exit_radius": res.get("max_exit_radius", 1.0),
+            "min_mos": res.get("min_mos", 0.10),
+            "max_temp_ratio": res.get("max_temp_ratio", 0.90),
+            "max_iter": res.get("max_iter", 50),
+            "nit": res.get("nit", 0)
         }
     return {}
+

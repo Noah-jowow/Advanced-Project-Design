@@ -148,11 +148,24 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
         if domain == "prop" and PROP_AVAILABLE:
             opt = prop_core.NozzleOptimizer()
             
+        radar_tick_count = 0
         while True:
             try:
                 # Wait for interaction command from the frontend
                 data = await websocket.receive_json()
                 command = data.get("command")
+                radar_tick_count += 1
+                
+                # Developer Signal Logging
+                if domain == "prop":
+                    await manager.log(f"[CLIENT_SIGNAL] Domain: 'prop' | Command: '{command}' | Params: {list(data.get('data', {}).keys())}", websocket)
+                elif domain == "aero":
+                    await manager.log(f"[CLIENT_SIGNAL] Domain: 'aero' | Command: '{command}'", websocket)
+                elif domain == "radar":
+                    if command == "add_target":
+                        await manager.log(f"[CLIENT_SIGNAL] Domain: 'radar' | Command: 'add_target' | Payload: {data.get('data', {})}", websocket)
+                    elif command == "scan" and (radar_tick_count == 1 or radar_tick_count % 16 == 0):
+                        await manager.log(f"[CLIENT_SIGNAL] Domain: 'radar' | Active Stream Heartbeat (Tick {radar_tick_count})", websocket)
                 
                 payload = {
                     "domain": domain,
@@ -167,7 +180,9 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                     
                     if command in ["scan", "add_target"]:
                         # Use the delegated radar processor from radar_router.py
-                        radar_results = radar_process_command(dsp, tracker, env_sim, command, sim_data)
+                        def sync_radar_log(msg: str):
+                            asyncio.create_task(manager.log(msg, websocket))
+                        radar_results = radar_process_command(dsp, tracker, env_sim, command, sim_data, log_callback=sync_radar_log)
                         payload["data"].update(radar_results)
                     
                     if command == "scan":
@@ -273,6 +288,10 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                                 payload["data"]["azel_tau_a"] = azel_state.tau_a
                                 payload["data"]["azel_tau_e"] = azel_state.tau_e
                                 payload["data"]["azel_warn"] = azel_state.warning_state
+
+                                if radar_tick_count % 8 == 0 or radar_tick_count == 1:
+                                    await manager.log(f"[RADAR_TRACK] Track 1: Pos=[{est[0]:.0f}, {est[1]:.0f}, {est[2]:.0f}] m | Vel=[{est[3]:.1f}, {est[4]:.1f}, {est[5]:.1f}] m/s", websocket)
+                                    await manager.log(f"[RADAR_GIMBAL] Pointer: Hexapod=[{hex_state.warning_state}] (Cond={hex_state.cond_J:.2f}) | Gimbal=[{azel_state.warning_state}] (Az={azel_state.q[0]*180/np.pi:.1f}°, El={azel_state.q[1]*180/np.pi:.1f}°)", websocket)
                             except Exception as e:
                                 print(f"Pointer Dynamics Error: {e}")
 
@@ -553,7 +572,7 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
 
                     
                 elif domain == "prop" and command == "optimize" and PROP_AVAILABLE:
-                    prop_results = await prop_process_command(data, opt)
+                    prop_results = await prop_process_command(data, opt, manager=manager, websocket=websocket)
                     payload["data"].update(prop_results)
 
                 await manager.send_json(payload, websocket)

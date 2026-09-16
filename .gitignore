@@ -6,9 +6,16 @@ venv/
 env/
 .env
 .venv
+astro_env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Generated Runtime Data & Scratch Files
+*.vtk
+scratch/
+precomputed_guesses.json
+
 
 # MATLAB/Simulink Temporary & Generated Files
 *.asv
