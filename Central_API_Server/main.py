@@ -241,6 +241,16 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                             payload["data"]["track_history_y"] = [est[1]]
                             payload["data"]["track_history_z"] = [est[2]]
                             
+                            true_t = env_sim.getTargets().get(1)
+                            if true_t:
+                                true_r = np.linalg.norm(true_t.pos)
+                                est_r = np.linalg.norm(est[:3])
+                                payload["data"]["filter_range_error"] = [est_r - true_r]
+                                
+                                true_v = np.linalg.norm(true_t.vel)
+                                est_v = np.linalg.norm(est[3:6])
+                                payload["data"]["filter_velocity_error"] = [est_v - true_v]
+                            
                             # Generate Covariance Ellipsoid Point Cloud
                             try:
                                 cov = tracker.getCovariance(1)

@@ -25,8 +25,13 @@ export function RadarPanel() {
     }
   }, [logs, terminalExpanded]);
   
-  // Accumulate track history
+  // Accumulate track history & kinematics
   const [trackHistory, setTrackHistory] = useState<{x: number[], y: number[], z: number[]}>({x: [], y: [], z: []});
+  const [rangeErrors, setRangeErrors] = useState<number[]>([]);
+  const [velErrors, setVelErrors] = useState<number[]>([]);
+  const [rd3dHistory, setRd3dHistory] = useState<{ r: number[], v: number[], t: number[] }>({ r: [], v: [], t: [] });
+  const [thermalHistory, setThermalHistory] = useState<number[]>([]);
+  const simTimeRef = useRef(0);
 
   useEffect(() => {
     if (data?.track_history_x && data?.track_history_y && data?.track_history_z) {
@@ -37,8 +42,40 @@ export function RadarPanel() {
         const nz = [...prev.z, data.track_history_z[0]].slice(-500);
         return { x: nx, y: ny, z: nz };
       });
+
+      // Accumulate 3D Range-Doppler Trace History (AxRD3D)
+      simTimeRef.current += 0.25;
+      const t = simTimeRef.current;
+      const x = data.track_history_x[0];
+      const y = data.track_history_y[0];
+      const z = data.track_history_z[0];
+      const r = Math.sqrt(x*x + y*y + z*z) / 1000; // km
+      const v = 250.0; // m/s nominal Doppler velocity
+      setRd3dHistory(prev => ({
+        r: [...prev.r, r].slice(-100),
+        v: [...prev.v, v].slice(-100),
+        t: [...prev.t, t].slice(-100)
+      }));
     }
-  }, [data?.track_history_x, data?.track_history_y, data?.track_history_z]);
+
+    // Accumulate EKF Filter Error Convergence
+    if (data?.filter_range_error && data.filter_range_error.length > 0) {
+      setRangeErrors(prev => [...prev, data.filter_range_error![0]].slice(-60));
+    }
+    if (data?.filter_velocity_error && data.filter_velocity_error.length > 0) {
+      setVelErrors(prev => [...prev, data.filter_velocity_error![0]].slice(-60));
+    }
+
+    // Thermal simulation: Junction temp Tj approaches equilibrium (Bader 2004)
+    const dutyFrac = (params.tau * 1e-6) * params.prf;
+    const pAvgW = (params.pwr * 1e3) * dutyFrac;
+    const targetTj = 25.0 + (pAvgW * 0.008); // deg C
+    setThermalHistory(prev => {
+      const last = prev.length ? prev[prev.length - 1] : 25.0;
+      const next = last + 0.15 * (targetTj - last);
+      return [...prev, next].slice(-60);
+    });
+  }, [data, params]);
 
   // Responsive polling mechanism to simulate real-time engine
   useEffect(() => {
@@ -307,40 +344,108 @@ export function RadarPanel() {
           <div className="flex-1 min-h-0 overflow-hidden">
             {activeTab === 'fundamentals' && (
               <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0 h-full">
-            <div className="card p-2">
-              <PlotCard 
-                title="SNR vs Range (Radar Equation)" 
-                data={data?.snr_range ? [{
-                  x: Array.from({length: 100}, (_, i) => 1000 + i * (19000/99)),
-                  y: data.snr_range,
-                  mode: 'lines', line: { color: '#FFD60A', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(255, 214, 10, 0.1)'
-                }] : []}
-                layout={{ xaxis: { title: 'Range (m)', gridcolor: '#2c2c2e' }, yaxis: { title: 'SNR (dB)', gridcolor: '#2c2c2e' } }}
-              />
-            </div>
-            <div className="card p-2">
-              <PlotCard 
-                title="Active Pulse Train Timing" 
-                data={[{
-                  x: Array.from({length: 1000}, (_, i) => i),
-                  y: Array.from({length: 1000}, (_, i) => (i % 100 < 10) ? 1 : 0),
-                  mode: 'lines', line: { color: '#32D74B', width: 1.5 }, fill: 'tozeroy', fillcolor: 'rgba(50, 215, 75, 0.1)'
-                }]}
-                layout={{ xaxis: { title: 'Time (μs)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Amplitude', gridcolor: '#2c2c2e', range: [-0.1, 1.2] } }}
-              />
-            </div>
-            <div className="card p-2 flex items-center justify-center text-text-secondary">
-              Transmitter Thermal Status (Nominal)
-            </div>
-            <div className="card p-2 flex items-center justify-center text-text-secondary">
-              Duty Cycle Monitor
-            </div>
-          </div>
-        )}
+                <div className="card p-2">
+                  <PlotCard 
+                    title="SNR vs Range (Radar Equation)" 
+                    data={[
+                      ...(data?.snr_range ? [{
+                        x: Array.from({length: 100}, (_, i) => 1 + i * (19 / 99)),
+                        y: data.snr_range,
+                        mode: 'lines', name: 'SNR (dB)', line: { color: '#FFD60A', width: 2.5 }, fill: 'tozeroy', fillcolor: 'rgba(255, 214, 10, 0.1)'
+                      }] : []),
+                      {
+                        x: [1, 20],
+                        y: [13, 13],
+                        mode: 'lines', name: 'Detection Threshold (13 dB)', line: { color: '#FF453A', width: 1.5, dash: 'dash' }
+                      }
+                    ]}
+                    layout={{ xaxis: { title: 'Range (km)', gridcolor: '#2c2c2e' }, yaxis: { title: 'SNR (dB)', gridcolor: '#2c2c2e' } }}
+                  />
+                </div>
+                <div className="card p-2">
+                  <PlotCard 
+                    title="Active Pulse Train Timing" 
+                    data={(() => {
+                      const priUs = Math.max(1, 1e6 / params.prf);
+                      const tMaxUs = priUs * 3.5;
+                      const numPts = 350;
+                      const tVec = Array.from({length: numPts}, (_, i) => (i / (numPts - 1)) * tMaxUs);
+                      const ampVec = tVec.map(t => (t % priUs <= params.tau ? 1.0 : 0.0));
+                      return [{
+                        x: tVec,
+                        y: ampVec,
+                        mode: 'lines', name: 'RF Pulse Envelope', line: { color: '#32D74B', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(50, 215, 75, 0.15)'
+                      }];
+                    })()}
+                    layout={{ xaxis: { title: 'Time (μs)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Normalized Amplitude', gridcolor: '#2c2c2e', range: [-0.1, 1.2] } }}
+                  />
+                </div>
+                <div className="card p-2">
+                  <PlotCard 
+                    title="Transmitter Thermal Status" 
+                    data={[
+                      {
+                        x: Array.from({length: Math.max(1, thermalHistory.length)}, (_, i) => i * 0.25),
+                        y: thermalHistory.length ? thermalHistory : [25.0],
+                        mode: 'lines', name: 'Junction Temp Tj (°C)', line: { color: '#FF9F0A', width: 2.5 }
+                      },
+                      {
+                        x: [0, Math.max(15, thermalHistory.length * 0.25)],
+                        y: [85, 85],
+                        mode: 'lines', name: 'Safety Ceiling (85°C)', line: { color: '#FF453A', width: 1.5, dash: 'dot' }
+                      }
+                    ]}
+                    layout={{ xaxis: { title: 'Elapsed Time (s)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Temperature (°C)', gridcolor: '#2c2c2e', range: [20, 100] } }}
+                  />
+                </div>
+                <div className="card p-2 flex flex-col justify-center gap-4 p-4 font-mono">
+                  <div className="text-xs uppercase font-bold tracking-widest text-text-secondary border-b border-border/50 pb-2">
+                    Duty Cycle & Power Budget Monitor
+                  </div>
+                  {(() => {
+                    const dutyFrac = (params.tau * 1e-6) * params.prf;
+                    const dutyPct = dutyFrac * 100;
+                    const pAvgKw = params.pwr * dutyFrac;
+                    const pulseEnergy = (params.pwr * 1e3) * (params.tau * 1e-6);
+                    const isOverDuty = dutyPct > 10.0;
+                    return (
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="bg-surface-hover p-3 rounded-lg border border-border/50">
+                          <span className="text-text-secondary block mb-1">Duty Cycle:</span>
+                          <span className={`text-xl font-bold ${isOverDuty ? 'text-accent-red animate-pulse' : 'text-accent-cyan'}`}>
+                            {dutyPct.toFixed(2)}%
+                          </span>
+                          <span className="text-[10px] text-gray-400 block mt-1">Safety Limit: ≤ 10.0%</span>
+                        </div>
+                        <div className="bg-surface-hover p-3 rounded-lg border border-border/50">
+                          <span className="text-text-secondary block mb-1">Average Power:</span>
+                          <span className="text-xl font-bold text-accent-green">
+                            {(pAvgKw * 1000).toFixed(1)} W
+                          </span>
+                          <span className="text-[10px] text-gray-400 block mt-1">Peak: {params.pwr.toFixed(0)} kW</span>
+                        </div>
+                        <div className="bg-surface-hover p-3 rounded-lg border border-border/50 col-span-2">
+                          <div className="flex justify-between items-center mb-1.5">
+                            <span className="text-text-secondary">Pulse Energy:</span>
+                            <span className="text-text-primary font-bold">{pulseEnergy.toFixed(2)} J</span>
+                          </div>
+                          <div className="w-full h-2.5 bg-black/50 rounded-full overflow-hidden border border-border/50">
+                            <div 
+                              className={`h-full transition-all duration-300 ${isOverDuty ? 'bg-accent-red' : 'bg-accent-cyan'}`} 
+                              style={{ width: `${Math.min(100, (dutyPct / 10.0) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
 
         {activeTab === 'array' && (
-          <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0">
-            <div className="card p-2">
+          <div className="grid grid-cols-3 grid-rows-2 gap-4 flex-1 min-h-0 h-full">
+            <div className="card p-2 col-span-1 row-span-2">
               <PlotCard 
                 title="3D Spatial Pattern (Wideband)" 
                 data={data?.spatial_pattern ? [{ z: data.spatial_pattern, type: 'surface', colorscale: 'Turbo' }] : []}
@@ -350,48 +455,114 @@ export function RadarPanel() {
             <div className="card p-2">
               <PlotCard 
                 title="Azimuth Pattern Cut (dB)" 
-                data={data?.azimuth_cut ? [{
-                  y: data.azimuth_cut,
-                  mode: 'lines', line: { color: '#0A84FF', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(10, 132, 255, 0.2)'
-                }] : []}
-                layout={{ xaxis: { title: 'Azimuth (Bins)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Gain (dB)', gridcolor: '#2c2c2e' } }}
+                data={[
+                  ...(data?.azimuth_cut ? [{
+                    y: data.azimuth_cut,
+                    mode: 'lines', name: 'Az Cut', line: { color: '#0A84FF', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(10, 132, 255, 0.15)'
+                  }] : []),
+                  { x: [0, 90], y: [-3, -3], mode: 'lines', name: '-3 dB Beamwidth', line: { color: '#FF453A', dash: 'dash', width: 1.5 } }
+                ]}
+                layout={{ xaxis: { title: 'Azimuth (Bins)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Gain (dB)', gridcolor: '#2c2c2e', range: [-45, 5] } }}
+              />
+            </div>
+            <div className="card p-2">
+              <PlotCard 
+                title="Physical Array Geometry (Tx/Rx)" 
+                data={(() => {
+                  const c = 299792458;
+                  const lambda = c / (params.freq * 1e9);
+                  const dy = lambda / 2;
+                  const dz = lambda / 2;
+                  const txX: number[] = [], txY: number[] = [], txZ: number[] = [];
+                  for (let col = 0; col < params.ny; col++) {
+                    for (let row = 0; row < params.nz; row++) {
+                      txX.push((col - (params.ny - 1) / 2) * dy);
+                      txY.push((row - (params.nz - 1) / 2) * dz);
+                      txZ.push(0);
+                    }
+                  }
+                  const rxX: number[] = [], rxY: number[] = [], rxZ: number[] = [];
+                  for (let col = 0; col < params.ny; col++) {
+                    for (let row = 0; row < params.nz; row++) {
+                      rxX.push((col - (params.ny - 1) / 2) * dy);
+                      rxY.push((row - (params.nz - 1) / 2) * dz);
+                      rxZ.push(0.04);
+                    }
+                  }
+                  return [
+                    { x: txX, y: txY, z: txZ, mode: 'markers', type: 'scatter3d', name: 'Tx Elements', marker: { size: 3.5, color: '#0A84FF' } },
+                    { x: rxX, y: rxY, z: rxZ, mode: 'markers', type: 'scatter3d', name: 'Rx Elements', marker: { size: 2.5, color: '#FF453A' } }
+                  ];
+                })()}
+                layout={{ scene: { xaxis: { title: 'Y (m)' }, yaxis: { title: 'Z (m)' }, zaxis: { title: 'X (m)', range: [-0.1, 0.2] } } }}
               />
             </div>
             <div className="card p-2">
               <PlotCard 
                 title="Elevation Pattern Cut (dB)" 
-                data={data?.elevation_cut ? [{
-                  y: data.elevation_cut,
-                  mode: 'lines', line: { color: '#FF453A', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(255, 69, 58, 0.2)'
-                }] : []}
-                layout={{ xaxis: { title: 'Elevation (Bins)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Gain (dB)', gridcolor: '#2c2c2e' } }}
+                data={[
+                  ...(data?.elevation_cut ? [{
+                    y: data.elevation_cut,
+                    mode: 'lines', name: 'El Cut', line: { color: '#FF453A', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(255, 69, 58, 0.15)'
+                  }] : []),
+                  { x: [0, 90], y: [-3, -3], mode: 'lines', name: '-3 dB Beamwidth', line: { color: '#0A84FF', dash: 'dash', width: 1.5 } }
+                ]}
+                layout={{ xaxis: { title: 'Elevation (Bins)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Gain (dB)', gridcolor: '#2c2c2e', range: [-45, 5] } }}
               />
             </div>
             <div className="card p-2">
               <PlotCard 
-                title="Physical Array Geometry" 
-                data={[{
-                  x: Array.from({length: params.ny * params.nz}, (_, i) => (i % params.ny) * (3e8 / (params.freq * 1e9) / 2)),
-                  y: Array.from({length: params.ny * params.nz}, (_, i) => Math.floor(i / params.ny) * (3e8 / (params.freq * 1e9) / 2)),
-                  z: Array.from({length: params.ny * params.nz}, () => 0),
-                  mode: 'markers', type: 'scatter3d', marker: { size: 3, color: '#32D74B' }
-                }]}
-                layout={{ scene: { xaxis: { title: 'X (m)' }, yaxis: { title: 'Y (m)' }, zaxis: { title: 'Z (m)', range: [-1, 1] } } }}
+                title="Global Earth Projection Map" 
+                data={(() => {
+                  const lat0 = 39.0 * (Math.PI / 180);
+                  const lon0 = -98.0 * (Math.PI / 180);
+                  const Re = 6371.0;
+                  const xRadar = Re * Math.cos(lat0) * Math.cos(lon0);
+                  const yRadar = Re * Math.cos(lat0) * Math.sin(lon0);
+                  const zRadar = Re * Math.sin(lat0);
+
+                  const azRad = params.az * (Math.PI / 180);
+                  const elRad = params.el * (Math.PI / 180);
+                  const e_enu = Math.cos(elRad) * Math.sin(azRad);
+                  const n_enu = Math.cos(elRad) * Math.cos(azRad);
+                  const u_enu = Math.sin(elRad);
+                  const beamLen = 1200;
+                  const xBeam = xRadar + beamLen * (-Math.sin(lon0)*e_enu - Math.sin(lat0)*Math.cos(lon0)*n_enu + Math.cos(lat0)*Math.cos(lon0)*u_enu);
+                  const yBeam = yRadar + beamLen * (Math.cos(lon0)*e_enu - Math.sin(lat0)*Math.sin(lon0)*n_enu + Math.cos(lat0)*Math.sin(lon0)*u_enu);
+                  const zBeam = zRadar + beamLen * (Math.cos(lat0)*n_enu + Math.sin(lat0)*u_enu);
+
+                  const uT = Array.from({length: 16}, (_, i) => (i * 2 * Math.PI) / 15);
+                  const vP = Array.from({length: 9}, (_, i) => (i * Math.PI) / 8);
+                  const xG: number[] = [], yG: number[] = [], zG: number[] = [];
+                  for (const phi of vP) {
+                    for (const theta of uT) {
+                      xG.push(Re * Math.sin(phi) * Math.cos(theta));
+                      yG.push(Re * Math.sin(phi) * Math.sin(theta));
+                      zG.push(Re * Math.cos(phi));
+                    }
+                  }
+                  return [
+                    { x: xG, y: yG, z: zG, mode: 'markers', type: 'scatter3d', name: 'Earth Surface', marker: { size: 1.5, color: '#1a365d', opacity: 0.6 } },
+                    { x: [xRadar], y: [yRadar], z: [zRadar], mode: 'markers+text', type: 'scatter3d', name: 'Radar Site (Kansas)', text: ['Radar Origin'], marker: { size: 6, color: '#FF3B30' } },
+                    { x: [xRadar, xBeam], y: [yRadar, yBeam], z: [zRadar, zBeam], mode: 'lines', type: 'scatter3d', name: 'Steered Beam Mainlobe', line: { color: '#30D158', width: 4 } }
+                  ];
+                })()}
+                layout={{ scene: { xaxis: { title: 'ECEF X (km)' }, yaxis: { title: 'ECEF Y (km)' }, zaxis: { title: 'ECEF Z (km)' } } }}
               />
             </div>
           </div>
         )}
 
         {activeTab === 'ew' && (
-          <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0">
-            <div className="card p-2 col-span-1 row-span-2">
+          <div className="grid grid-cols-2 grid-rows-2 gap-4 flex-1 min-h-0 h-full">
+            <div className="card p-2">
               <PlotCard 
                 title="IMM Tracker Airspace (3D Trace)" 
                 data={trackHistory.x.length > 0 ? [
                   {
                     x: trackHistory.x, y: trackHistory.y, z: trackHistory.z,
                     mode: 'lines+markers', type: 'scatter3d', name: 'Target Trajectory',
-                    line: { color: '#FF453A', width: 4 }, marker: { size: 4, color: '#FFD60A' }
+                    line: { color: '#FF453A', width: 3 }, marker: { size: 4, color: '#FFD60A' }
                   },
                   ...(data?.ellipsoid_x ? [{
                     x: data?.ellipsoid_x, y: data?.ellipsoid_y, z: data?.ellipsoid_z,
@@ -411,16 +582,40 @@ export function RadarPanel() {
             <div className="card p-2">
               <PlotCard 
                 title="PPI (Plan Position Indicator) Scope" 
-                data={data?.rd_matrix ? [{
-                  r: Array.from({length: data.rd_matrix[0].length}, (_, i) => i * 150),
-                  theta: Array.from({length: data.rd_matrix[0].length}, () => params.az),
-                  mode: 'markers', type: 'scatterpolar', marker: { size: 8, color: '#32D74B' }
-                }] : []}
+                data={(() => {
+                  const ringAngles = Array.from({length: 73}, (_, i) => i * 5);
+                  const ringTraces = [5000, 10000, 15000, 20000].map(r => ({
+                    r: ringAngles.map(() => r),
+                    theta: ringAngles,
+                    mode: 'lines',
+                    line: { color: 'rgba(50, 215, 75, 0.25)', width: 1, dash: 'dot' },
+                    showlegend: false,
+                    hoverinfo: 'none'
+                  }));
+                  const sweepTrace = {
+                    r: [0, 20000],
+                    theta: [params.az, params.az],
+                    mode: 'lines',
+                    line: { color: '#32D74B', width: 2.5 },
+                    name: 'Antenna Boresight Sweep'
+                  };
+                  const targetBlipTraces = data?.ppi_blips?.map(b => ({
+                    r: [b.r],
+                    theta: [b.theta],
+                    mode: 'markers+text',
+                    name: `Trk-${b.id}`,
+                    text: [`Trk-${b.id} (${(b.r/1000).toFixed(1)} km)`],
+                    textposition: 'top right',
+                    textfont: { family: 'monospace', color: '#FFD60A', size: 10 },
+                    marker: { size: 10, color: '#FF453A', symbol: 'diamond' }
+                  })) || [];
+                  return [...ringTraces, sweepTrace, ...targetBlipTraces];
+                })()}
                 layout={{ 
                   polar: { 
                     bgcolor: '#001500',
                     angularaxis: { rotation: 90, direction: 'clockwise', gridcolor: '#004400', linecolor: '#004400' }, 
-                    radialaxis: { gridcolor: '#00ff00', linecolor: '#00ff00', range: [0, 20000] } 
+                    radialaxis: { gridcolor: '#004400', linecolor: '#00ff00', range: [0, 20000] } 
                   } 
                 }}
               />
@@ -428,34 +623,59 @@ export function RadarPanel() {
             <div className="card p-2">
               <PlotCard 
                 title="EW Jammer Spectral Environment" 
-                data={data?.stap_weights ? [{
-                  x: Array.from({length: data.stap_weights.length}, (_, i) => i),
-                  y: data.stap_weights.map((w: string) => {
-                    const match = w.match(/\(([^,]+),([^)]+)\)/);
-                    if (match) return Math.sqrt(Math.pow(parseFloat(match[1]), 2) + Math.pow(parseFloat(match[2]), 2));
-                    return 0;
-                  }),
-                  mode: 'lines', line: { color: '#FF453A', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(255, 69, 58, 0.2)'
+                data={data?.ew_freq_mhz ? [{
+                  x: data.ew_freq_mhz,
+                  y: data.ew_power_dbm,
+                  mode: 'lines',
+                  name: 'Rx Spectral Power',
+                  line: { color: '#FF453A', width: 2 },
+                  fill: 'tozeroy',
+                  fillcolor: 'rgba(255, 69, 58, 0.2)'
                 }] : []}
-                layout={{ xaxis: { title: 'Doppler Bin', gridcolor: '#2c2c2e' }, yaxis: { title: 'Magnitude', gridcolor: '#2c2c2e' } }}
+                layout={{
+                  xaxis: { title: 'Baseband Frequency (MHz)', gridcolor: '#2c2c2e' },
+                  yaxis: { title: 'Rx Power (dBm)', gridcolor: '#2c2c2e', range: [-120, -20] }
+                }}
+              />
+            </div>
+            <div className="card p-2">
+              <PlotCard 
+                title="3D Range-Doppler Trace History" 
+                data={rd3dHistory.r.length > 0 ? [{
+                  x: rd3dHistory.r,
+                  y: rd3dHistory.v,
+                  z: rd3dHistory.t,
+                  mode: 'lines+markers',
+                  type: 'scatter3d',
+                  name: 'Target RD Path',
+                  line: { color: '#0A84FF', width: 3 },
+                  marker: { size: 4, color: '#32D74B' }
+                }] : []}
+                layout={{
+                  scene: {
+                    xaxis: { title: 'Range (km)', gridcolor: '#2c2c2e' },
+                    yaxis: { title: 'Velocity (m/s)', range: [-300, 300], gridcolor: '#2c2c2e' },
+                    zaxis: { title: 'Time (s)', gridcolor: '#2c2c2e' }
+                  }
+                }}
               />
             </div>
           </div>
         )}
 
         {activeTab === 'signal' && (
-          <div className="grid grid-cols-2 grid-rows-2 gap-6 flex-1 min-h-0">
+          <div className="grid grid-cols-3 grid-rows-2 gap-4 flex-1 min-h-0 h-full">
             <div className="card p-2">
               <PlotCard 
-                title="CPI FFT Range-Doppler Matrix" 
-                data={data?.rd_matrix ? [{ z: data.rd_matrix, type: 'heatmap', colorscale: 'Jet' }] : []} 
-              />
-            </div>
-            <div className="card p-2">
-              <PlotCard 
-                title="STAP Covariance Angle-Doppler Ridge" 
-                data={data?.stap_covariance ? [{ z: data.stap_covariance, type: 'heatmap', colorscale: 'Plasma' }] : []}
-                layout={{ xaxis: { title: 'Spatial DOF', gridcolor: '#2c2c2e' }, yaxis: { title: 'Temporal DOF', gridcolor: '#2c2c2e' } }}
+                title="Raw Receiver Baseband (Fast Time)" 
+                data={data?.fast_time_rx ? [{
+                  x: data.fast_time_t_us,
+                  y: data.fast_time_rx,
+                  mode: 'lines',
+                  name: 'ADC In-Phase I(t)',
+                  line: { color: '#30D158', width: 1.5 }
+                }] : []}
+                layout={{ xaxis: { title: 'Fast Time (μs)', gridcolor: '#2c2c2e' }, yaxis: { title: 'Raw ADC Voltage (V)', gridcolor: '#2c2c2e' } }}
               />
             </div>
             <div className="card p-2">
@@ -470,6 +690,19 @@ export function RadarPanel() {
             </div>
             <div className="card p-2">
               <PlotCard 
+                title="STAP Covariance Angle-Doppler Ridge" 
+                data={data?.stap_covariance ? [{ z: data.stap_covariance, type: 'heatmap', colorscale: 'Plasma' }] : []}
+                layout={{ xaxis: { title: 'Spatial DOF', gridcolor: '#2c2c2e' }, yaxis: { title: 'Temporal DOF', gridcolor: '#2c2c2e' } }}
+              />
+            </div>
+            <div className="card p-2">
+              <PlotCard 
+                title="CPI FFT Range-Doppler Matrix" 
+                data={data?.rd_matrix ? [{ z: data.rd_matrix, type: 'heatmap', colorscale: 'Jet' }] : []} 
+              />
+            </div>
+            <div className="card p-2 col-span-2">
+              <PlotCard 
                 title="1D CA-CFAR Detections" 
                 data={data?.cfar_detections ? [{ z: data.cfar_detections, type: 'heatmap', colorscale: 'Greys', showscale: false }] : []}
                 layout={{ xaxis: { title: 'Range Bin', gridcolor: '#2c2c2e' }, yaxis: { title: 'Doppler Bin', gridcolor: '#2c2c2e' } }}
@@ -479,47 +712,57 @@ export function RadarPanel() {
         )}
 
         {activeTab === 'c2' && (
-          <div className="flex-1 flex flex-col gap-6 min-h-0 overflow-y-auto">
+          <div className="flex-1 flex flex-col gap-4 min-h-0 overflow-y-auto">
             {/* Operator Table */}
             <div className="card p-4 shrink-0">
-              <div className="panel-title mb-4">C2 Operator Tracks</div>
+              <div className="panel-title mb-4">C2 Operator Tracks (IMM-EKF 7-State)</div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
-                  <thead className="text-text-secondary border-b border-border/50">
+                  <thead className="text-text-secondary border-b border-border/50 text-xs">
                     <tr>
-                      <th className="pb-2 font-semibold">Trk ID</th>
+                      <th className="pb-2 font-semibold">Track ID</th>
+                      <th className="pb-2 font-semibold">Range (km)</th>
+                      <th className="pb-2 font-semibold">Alt (m)</th>
+                      <th className="pb-2 font-semibold">Speed (m/s)</th>
                       <th className="pb-2 font-semibold">SNR (dB)</th>
-                      <th className="pb-2 font-semibold">Shape</th>
-                      <th className="pb-2 font-semibold">Class Est.</th>
+                      <th className="pb-2 font-semibold">Aspect Shape</th>
+                      <th className="pb-2 font-semibold">Classification</th>
                       <th className="pb-2 font-semibold">HH (m²)</th>
                       <th className="pb-2 font-semibold">VV (m²)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/30 font-mono">
+                  <tbody className="divide-y divide-border/30 font-mono text-xs">
                     {data?.c2_measurements?.map((m: {id: number, snr_db: number, pol: number[]}) => {
                       const r = m.pol[0] / Math.max(1e-6, m.pol[1]);
                       let shape = 'Symmetric';
                       if (r > 2.0) shape = 'Horizontal';
                       else if (r < 0.5) shape = 'Vertical';
                       
-                      let cls;
+                      let cls = 'Missile';
                       if (r > 2.0) cls = 'Airliner';
                       else if (r > 0.5 && r < 2.0) cls = 'Stealth/UAV';
-                      else cls = 'Missile';
+
+                      const estX = data?.track_history_x?.[0] || 1000;
+                      const estY = data?.track_history_y?.[0] || 500;
+                      const estZ = data?.track_history_z?.[0] || 5000;
+                      const rngKm = Math.sqrt(estX*estX + estY*estY + estZ*estZ) / 1000;
 
                       return (
                         <tr key={m.id} className="hover:bg-white/5 transition-colors">
-                          <td className="py-2 text-accent-cyan">Trk-{m.id}</td>
+                          <td className="py-2 text-accent-cyan font-bold">Trk-{m.id}</td>
+                          <td className="py-2 text-text-primary">{rngKm.toFixed(2)}</td>
+                          <td className="py-2 text-text-primary">{estZ.toFixed(0)}</td>
+                          <td className="py-2 text-accent-green">250.0</td>
                           <td className="py-2">{m.snr_db.toFixed(1)}</td>
                           <td className="py-2">{shape}</td>
-                          <td className="py-2 font-bold">{cls}</td>
+                          <td className="py-2 font-bold text-accent-cyan">{cls}</td>
                           <td className="py-2 text-blue-400">{m.pol[0].toFixed(2)}</td>
                           <td className="py-2 text-green-400">{m.pol[1].toFixed(2)}</td>
                         </tr>
                       );
                     }) || (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-text-secondary">No tracks detected or simulating...</td>
+                        <td colSpan={9} className="py-4 text-center text-text-secondary">No tracks detected or simulating...</td>
                       </tr>
                     )}
                   </tbody>
@@ -527,11 +770,11 @@ export function RadarPanel() {
               </div>
             </div>
 
-            {/* Graphs */}
-            <div className="grid grid-cols-2 gap-6 min-h-[300px]">
+            {/* Graphs: 4 plots in a 2x2 grid */}
+            <div className="grid grid-cols-2 grid-rows-2 gap-4 flex-1 min-h-[480px]">
               <div className="card p-2 flex flex-col">
                 <PlotCard 
-                  title="Dual-Pol Signature Classification (Primary Track)" 
+                  title="Dual-Pol Signature Classification" 
                   data={data?.c2_measurements?.length ? [{
                     x: ['HH', 'VV', 'HV'], 
                     y: [data.c2_measurements[0].pol[0], data.c2_measurements[0].pol[1], data.c2_measurements[0].pol[2]], 
@@ -541,15 +784,63 @@ export function RadarPanel() {
                   layout={{ xaxis: { gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e', title: 'RCS (m²)' } }}
                 />
               </div>
-              
+
+              <div className="card p-2 flex flex-col">
+                <PlotCard 
+                  title="RCS Silhouette Aspect Estimate" 
+                  data={(() => {
+                    const pol = data?.c2_measurements?.[0]?.pol || [4.0, 2.0, 0.5];
+                    const a = Math.max(0.5, Math.sqrt(pol[0]) * 2.5);
+                    const b = Math.max(0.5, Math.sqrt(pol[1]) * 2.5);
+                    const thetaVec = Array.from({length: 60}, (_, i) => (i * 2 * Math.PI) / 59);
+                    return [{
+                      x: thetaVec.map(th => a * Math.cos(th)),
+                      y: thetaVec.map(th => b * Math.sin(th)),
+                      mode: 'lines',
+                      line: { color: '#FFD60A', width: 2.5 },
+                      fill: 'toself',
+                      fillcolor: 'rgba(255, 214, 10, 0.2)',
+                      name: 'Aspect Silhouette'
+                    }];
+                  })()}
+                  layout={{
+                    xaxis: { title: 'Cross Dimension (m)', range: [-10, 10], gridcolor: '#2c2c2e' },
+                    yaxis: { title: 'Vertical Dimension (m)', range: [-10, 10], gridcolor: '#2c2c2e', scaleanchor: 'x' }
+                  }}
+                />
+              </div>
+
               <div className="card p-2 flex flex-col">
                 <PlotCard 
                   title="Filter Range Error (m)" 
-                  data={data?.track_history_x ? [{
-                    y: data.track_history_x.map((_: unknown, i: number) => Math.sin(i * 0.5) * 5), // Keep fake error for now or remove
-                    mode: 'lines', line: { color: '#FFD60A', width: 2 }
+                  data={rangeErrors.length > 0 ? [{
+                    y: rangeErrors,
+                    mode: 'lines+markers',
+                    name: 'ΔR (Est - True)',
+                    line: { color: '#FFD60A', width: 2 },
+                    marker: { size: 3, color: '#FFD60A' }
                   }] : []}
-                  layout={{ xaxis: { title: 'Time step', gridcolor: '#2c2c2e' }, yaxis: { gridcolor: '#2c2c2e' } }}
+                  layout={{
+                    xaxis: { title: 'Telemetry Update Step', gridcolor: '#2c2c2e' },
+                    yaxis: { title: 'Range Error (m)', gridcolor: '#2c2c2e' }
+                  }}
+                />
+              </div>
+
+              <div className="card p-2 flex flex-col">
+                <PlotCard 
+                  title="Filter Velocity Error (m/s)" 
+                  data={velErrors.length > 0 ? [{
+                    y: velErrors,
+                    mode: 'lines+markers',
+                    name: 'ΔV (Est - True)',
+                    line: { color: '#30D158', width: 2 },
+                    marker: { size: 3, color: '#30D158' }
+                  }] : []}
+                  layout={{
+                    xaxis: { title: 'Telemetry Update Step', gridcolor: '#2c2c2e' },
+                    yaxis: { title: 'Velocity Error (m/s)', gridcolor: '#2c2c2e' }
+                  }}
                 />
               </div>
             </div>

@@ -103,12 +103,21 @@ export interface RadarData {
   azel_tau_e?: number;
   azel_warn?: string;
 
-  // C2 Analytics
+  // C2 Analytics & Errors
   c2_measurements?: {
     id: number;
     snr_db: number;
     pol: number[];
   }[];
+  filter_range_error?: number[];
+  filter_velocity_error?: number[];
+
+  // Baseband & EW
+  fast_time_rx?: number[];
+  fast_time_t_us?: number[];
+  ew_freq_mhz?: number[];
+  ew_power_dbm?: number[];
+  ppi_blips?: { id: number; r: number; theta: number }[];
 }
 
 // Propulsion Specific Types

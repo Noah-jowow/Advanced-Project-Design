@@ -122,11 +122,33 @@ def radar_process_command(dsp, tracker, env_sim, command, sim_data, log_callback
         mf_out = dsp.applyLFMMatchedFilter(pulse, bw, tau, 125e6)
         payload["mf_profile"] = (10 * np.log10(np.abs(mf_out)**2 + 1e-10)).tolist()
 
-        # Fundamentals: SNR vs Range (simulated curve)
+        # Fast-Time Baseband Signal (raw ADC voltage trace, matching MATLAB AxTime)
+        payload["fast_time_rx"] = np.real(pulse[:256]).tolist()
+        payload["fast_time_t_us"] = (np.arange(256) / fs * 1e6).tolist()
+
+        # Fundamentals: SNR vs Range (Radar Equation)
         ranges = np.linspace(1000, 20000, 100)
         pt = pwr_kw * 1e3
         snr_curve = 10 * np.log10((pt * 1e12) / (ranges**4 + 1e-1))
         payload["snr_range"] = snr_curve.tolist()
+
+        # EW Jammer Spectral Environment (matching MATLAB AxEWSpec)
+        ew_n_bins = 128
+        ew_freqs = np.linspace(-bw / 2e6, bw / 2e6, ew_n_bins)
+        ew_spec = -100.0 + 2.0 * np.random.randn(ew_n_bins)
+        jam_offset_mhz = (jammerAz / 90.0) * (bw / 4e6)
+        jam_bin = int(np.clip(np.argmin(np.abs(ew_freqs - jam_offset_mhz)), 0, ew_n_bins - 1))
+        ew_spec[max(0, jam_bin - 2):min(ew_n_bins, jam_bin + 3)] += max(0.0, jnr_db + 80.0)
+        payload["ew_freq_mhz"] = ew_freqs.tolist()
+        payload["ew_power_dbm"] = ew_spec.tolist()
+
+        # PPI Polar Blips from active targets (matching MATLAB AxPPI)
+        ppi_blips = []
+        for tid, tgt in targets.items():
+            t_r = float(np.linalg.norm(tgt.pos))
+            t_az_deg = float(np.degrees(np.arctan2(tgt.pos[1], tgt.pos[0])) % 360.0)
+            ppi_blips.append({"id": tid, "r": t_r, "theta": t_az_deg})
+        payload["ppi_blips"] = ppi_blips
         
         # 3. STAP Clutter Cancellation
         N = Ny 
