@@ -43,10 +43,12 @@ export function PropulsionPanel() {
 
   useEffect(() => {
     if (data?.status === 'completed' || data?.geometry_x || data?.error) {
-      setIsSolving(false);
+      const timer = setTimeout(() => setIsSolving(false), 0);
+      return () => clearTimeout(timer);
     }
     if (data?.status === 'optimizing') {
-      setIsSolving(true);
+      const timer = setTimeout(() => setIsSolving(true), 0);
+      return () => clearTimeout(timer);
     }
   }, [data]);
 
@@ -107,7 +109,7 @@ export function PropulsionPanel() {
     const beta = Math.sqrt(Math.max(machExit * machExit - 1.0, 0.25));
     const lCell = Math.max(1.15 * dExit * beta, 0.15);
 
-    const traces: any[] = [];
+    const traces: Record<string, unknown>[] = [];
 
     // 0. Payload Bay Envelope Clearance Bounds (User Constraints L_max, R_max)
     const envL = params.maxLength;
@@ -265,7 +267,7 @@ export function PropulsionPanel() {
   const generateRaoGeometryTraces = () => {
     if (geomX.length < 2) return [];
 
-    const traces: any[] = [
+    const traces: Record<string, unknown>[] = [
       {
         x: geomX,
         y: geomY,

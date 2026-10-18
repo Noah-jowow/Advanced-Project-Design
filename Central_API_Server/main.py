@@ -316,6 +316,32 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                                     await manager.log(f"[RADAR_GIMBAL] Pointer: Hexapod=[{hex_state.warning_state}] (Cond={hex_state.cond_J:.2f}) | Gimbal=[{azel_state.warning_state}] (Az={azel_state.q[0]*180/np.pi:.1f}°, El={azel_state.q[1]*180/np.pi:.1f}°)", websocket)
                             except Exception as e:
                                 print(f"Pointer Dynamics Error: {e}")
+                        else:
+                            # If no target active yet, point along antenna boresight
+                            try:
+                                az_rad = np.radians(steerAz)
+                                el_rad = np.radians(steerEl)
+                                target_pos = np.array([
+                                    5000.0 * np.cos(el_rad) * np.sin(az_rad),
+                                    5000.0 * np.cos(el_rad) * np.cos(az_rad),
+                                    5000.0 * np.sin(el_rad)
+                                ])
+                                hex_state = pointer_dyn.stepHexapod(target_pos, dt)
+                                azel_state = pointer_dyn.stepAzEl(target_pos, dt)
+                                
+                                payload["data"]["hex_tp"] = hex_state.TP.tolist()
+                                payload["data"]["hex_base"] = pointer_dyn.getHexBase().tolist()
+                                payload["data"]["hex_laser"] = hex_state.laser_vec.tolist()
+                                payload["data"]["hex_forces"] = hex_state.Fa.tolist()
+                                payload["data"]["hex_warn"] = hex_state.warning_state
+                                payload["data"]["hex_cond"] = hex_state.cond_J
+                                
+                                payload["data"]["azel_q"] = azel_state.q.tolist()
+                                payload["data"]["azel_tau_a"] = azel_state.tau_a
+                                payload["data"]["azel_tau_e"] = azel_state.tau_e
+                                payload["data"]["azel_warn"] = azel_state.warning_state
+                            except Exception as e:
+                                print(f"Pointer Dynamics Boresight Error: {e}")
 
                     
                 elif domain == "aero" and command == "preview_geometry":

@@ -1,55 +1,76 @@
 # Advanced Project Design: System Architecture
 
 ## Overview
-This workspace is designed using a **System of Systems** architecture. It integrates multiple complex engineering disciplines (Aerodynamics, Propulsion, Radar, Orbital Mechanics, and Control Systems) into a unified, high-performance ecosystem. 
+This workspace is designed using a **System of Systems** architecture. It integrates multiple complex aerospace and defense engineering disciplines (Aerodynamics CFD, Chemical Rocket Propulsion, Phased Array Radar & Pointer Dynamics, and Spacecraft Attitude & Orbit Dynamics) into a unified, high-performance distributed ecosystem.
 
-The original codebase consisted of massive, monolithic MATLAB scripts. The current architectural goal is to decouple these domains into independent, highly optimized C++ and Python microservices that communicate via a central FastAPI Gateway.
+The core architectural paradigm is **Centralized Gateway, Decentralized Mathematics**:
+- **C++ Physics Engines (Eigen3 + Pybind11):** Heavy linear algebra and numerical physics run at native machine speed with zero overhead.
+- **FastAPI Monolithic Gateway (`Central_API_Server/main.py`):** Unified asynchronous routing, state caching, and high-frequency bi-directional WebSocket streaming (`/ws/stream/{domain}`).
+- **React/Vite Industrial SPA (`Central_API_Server/frontend/`):** Dynamic single-page application rendering tactical dashboards with 60 FPS Plotly.js charts, interactive controls, and terminal logging.
 
 ---
 
 ## 1. Directory & Repository Structure
-The workspace is split into six independent Git repositories, each representing a distinct engineering domain:
 
-- **`Aerodynamics_CFD/`**: 2D/3D Euler and Navier-Stokes flow solvers.
-- **`Propulsion/`**: Chemical rocket thermodynamic analysis and converging-diverging nozzle optimization.
-- **`Radar_Systems/`**: Phased array synthesis, pulsed Doppler Digital Signal Processing (DSP), and kinematic tracking.
-- **`Tracker/`**: Control system laws (PID, LQR) and CAD hardware models for physical target tracking systems.
-- **`ToolDev/`**: Orbital mechanics (Lambert's Problem solvers), astrodynamics engines, and the future central API Gateway.
-- **`Career_Development/`**: An NPM Monorepo housing local React/Vite frontends for job tracking, resumes, and career analytics.
+The workspace is organized into independent Git repositories representing distinct domains:
 
-*Note: The root `Advanced-Project-Design` folder acts as an umbrella directory. It contains a global `.gitignore` to prevent nested git conflicts and this `ARCHITECTURE.md` file. Each domain folder above is its own independent git repository.*
+- **`Radar_Systems/`**: High-fidelity phased array beamforming, pulsed Doppler DSP, CA-CFAR detection, 7-state IMM-EKF kinematic tracking, true STAP clutter cancellation, and Newton-Euler Hexapod / Euler-Lagrange Az/El Pointer Dynamics (`radar_core`).
+- **`Aerodynamics_CFD/`**: 3D finite volume compressible Navier-Stokes and Euler solvers with AUSM+ flux splitting, LSQ gradient reconstruction with limiters, DDES turbulence modeling, and Gmsh unstructured meshing (`aero_core`).
+- **`Propulsion/`**: Rocket nozzle optimization via Method of Characteristics (MoC) Rao bell contouring, coupled with Bartz convective heat transfer, Fourier conduction, and Lamé thick-wall stress margins (`prop_core`).
+- **`Spacecraft_SADC/`**: Two-body continuous orbital propagation, Earth sidereal rotation, 6-DOF quaternion kinematics, Euler's rotational equations with inertia cross-coupling, gravity gradient disturbance, and LQR line-of-sight tracking for ground stations (`sadc_core`).
+- **`Tracker/`**: Control system laws and SolidWorks mechanical CAD assemblies for tracking hardware (slip rings, 1:4 spiral bevel gears, rotors).
+- **`Central_API_Server/`**: High-throughput FastAPI gateway, asynchronous WebSocket streaming (`/ws/stream/{domain}`), and commercial-grade React/Vite/Plotly single-page application.
+- **`System_Shared_Libraries/`**: Common vendor libraries (Eigen 3.4.0) and MEX wrappers for legacy research compatibility.
 
 ---
 
 ## 2. Core Architectural Principles
 
 ### A. The "C++ as the Source of Truth" Rule
-To achieve real-time simulation performance, the mathematical bottlenecks of the legacy MATLAB scripts are being ported into C++ utilizing the `Eigen` library for linear algebra. The C++ source code is considered the ultimate ground truth for the mathematical and physical behavior of the systems.
+To achieve real-time simulation performance, mathematical kernels run natively in C++ using `Eigen` for linear algebra. C++ source code is the single ground truth for the mathematical and physical behavior of each system.
 
 ### B. Python API Bindings (Pybind11)
-The C++ core engines are not compiled into standalone executables. Instead, they are compiled into Python extension modules (`.pyd` / `.so`) using `pybind11`. This allows the central Python API (housed in `ToolDev`) to rapidly call the C++ physics engines as if they were native Python functions.
+C++ core engines are compiled into native Python extension modules (`.pyd` on Windows, `.so` on Linux) using `pybind11` and CMake/Ninja. This enables the Central API Server to execute compiled C++ physics routines in-memory without inter-process communication serialization penalties.
 
 ### C. Rigorous Mathematical Documentation
 All code strictly adheres to Professional Engineering standards:
-- Derivations for complex equations are included in the source code comments.
-- Approximations (e.g., Patched Conic approximation, linearized Jacobians, constant-gamma expansions) must be explicitly stated.
-- Published literature references (e.g., *Bartz 1957*, *Wang 2000*) are mandated for empirical formulas.
+- Explicit derivations and governing equations are documented in header and source docstrings.
+- Mathematical approximations (e.g., small-angle assumptions, constant-gamma expansions, two-body spherical Earth) must be explicitly stated.
+- Published literature references (e.g., *Bartz 1957*, *Wertz 2011*, *Schaub & Junkins*, *Bader 2004*) are mandated for empirical formulas.
 
 ---
 
-## 3. Data Flow & The API Gateway
-*(Currently in Transition)*
+## 3. Data Flow & Streaming Architecture
 
-1. **Front-End**: A user interacts with a React frontend (or a legacy MATLAB UI).
-2. **Gateway**: The request hits the central FastAPI Gateway (Python).
-3. **Dispatch**: The Gateway identifies the domain (e.g., a Radar DSP request) and calls the pre-compiled C++ extension for that domain.
-4. **Execution**: The C++ engine executes the rigorous math (e.g., a Matched Filter or CFAR detection) natively using CPU-optimized `Eigen` routines.
-5. **Response**: The results are serialized back to Python and returned to the UI.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Engineer as Aerospace Operator
+    participant UI as React / Vite Frontend
+    participant WS as WebSocket (/ws/stream/{domain})
+    participant Gateway as FastAPI Central Gateway (main.py)
+    participant Core as Compiled C++ Engine (.pyd)
+
+    Engineer->>UI: Adjusts Parameter / Toggles Run (Mode, PRF, Target)
+    UI->>WS: Sends JSON Command {command: "scan", data: {...}}
+    WS->>Gateway: Dispatches to Domain Router
+    Gateway->>Core: Calls C++ Kernel via Pybind11 (e.g. processCPI, step)
+    Core-->>Gateway: Returns Eigen Matrices / State Vectors
+    Gateway-->>WS: Streams Real-time JSON Telemetry & DSP Logs
+    WS-->>UI: Plotly.js Renders Updated 3D Fields & Time Series
+```
+
+1. **Frontend Interaction:** User modifies parameters in glassmorphic sidebars and initiates real-time streaming or batch solve.
+2. **WebSocket Message:** Client sends JSON command payload across persistent WebSocket connection (`/ws/stream/radar`, `/ws/stream/aero`, `/ws/stream/prop`, `/ws/stream/sadc`).
+3. **Gateway Dispatch:** FastAPI router parses parameters, updates session state, and invokes C++ core functions in thread/process pools.
+4. **C++ Execution:** High-throughput math executes natively on CPU using SIMD-accelerated Eigen routines.
+5. **Real-Time Streaming:** Gateway serializes arrays and sends results + developer log telemetry back to the UI in sub-millisecond intervals.
+6. **Dynamic Rendering:** UI plots live 3D surface meshes, Doppler heatmaps, polar PPI blips, and flight traces smoothly.
 
 ---
 
-## 4. Legacy Archive Strategy
-Legacy MATLAB monoliths (such as `OmniRadarDirector.m` and `Rocket_Nozzle_Optimizer.m`) are retained for historical reference and algorithm parity checks. They are kept alongside the modern C++ implementations but are considered deprecated for active production development.
+## 4. Verification & Testing
 
----
-*Maintained under strict adherence to the agent-principles and professional engineering guidelines.*
+Every domain is validated using strict Test-Driven Development (TDD):
+- **Unit Tests:** Located in each domain's `tests/` directory (e.g., `Spacecraft_SADC/tests/test_sadc_math.py`).
+- **System Parity Tests:** Located in root `tests/test_parity.py`, asserting numerical parity between legacy MATLAB baselines and modernized C++ engines with strict tolerances (`rtol=1e-5`).

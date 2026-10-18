@@ -44,7 +44,8 @@ export function SADCPanel() {
 
   useEffect(() => {
     if (data?.status === 'completed' || data?.error) {
-      setIsSolving(false);
+      const timer = setTimeout(() => setIsSolving(false), 0);
+      return () => clearTimeout(timer);
     }
   }, [data]);
 
