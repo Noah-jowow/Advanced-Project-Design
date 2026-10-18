@@ -13,9 +13,10 @@ echo.
 echo   [1] Boot Radar C2 Workspace
 echo   [2] Boot Aerodynamics CFD Workspace
 echo   [3] Boot Rocket Propulsion Workspace
+echo   [4] Boot Spacecraft Attitude & Orbit (SADC) Workspace
 echo   [Q] Quit
 echo.
-set /p "choice=Enter your choice [1-3, Q]: "
+set /p "choice=Enter your choice [1-4, Q]: "
 
 if /I "%choice%"=="1" (
     set URL_TARGET=http://localhost:5173/?project=RADAR
@@ -27,6 +28,10 @@ if /I "%choice%"=="2" (
 )
 if /I "%choice%"=="3" (
     set URL_TARGET=http://localhost:5173/?project=PROPULSION
+    goto ULTRA_BOOT
+)
+if /I "%choice%"=="4" (
+    set URL_TARGET=http://localhost:5173/?project=SADC
     goto ULTRA_BOOT
 )
 if /I "%choice%"=="Q" exit
@@ -46,6 +51,9 @@ cd ..\Aerodynamics_CFD
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release >nul 2>&1
 cmake --build build >nul 2>&1
 cd ..\Propulsion
+cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release >nul 2>&1
+cmake --build build >nul 2>&1
+cd ..\Spacecraft_SADC
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release >nul 2>&1
 cmake --build build >nul 2>&1
 cd ..

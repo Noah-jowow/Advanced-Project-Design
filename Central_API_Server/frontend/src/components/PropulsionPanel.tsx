@@ -170,7 +170,7 @@ export function PropulsionPanel() {
         fill: 'tonexty',
         fillcolor: 'rgba(255, 214, 10, 0.12)',
         hoverinfo: 'text',
-        text: x.map((xv, i) => `δ*: ${((deltaStar[i] || 0) * 1000).toFixed(2)} mm`)
+        text: x.map((_, i) => `δ*: ${((deltaStar[i] || 0) * 1000).toFixed(2)} mm`)
       });
       traces.push({
         x: x,

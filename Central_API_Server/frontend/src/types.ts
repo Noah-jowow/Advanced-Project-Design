@@ -120,8 +120,81 @@ export interface RadarData {
   ppi_blips?: { id: number; r: number; theta: number }[];
 }
 
+// SADC (Spacecraft Attitude Dynamics & Control) Specific Types
+export interface SADCData {
+  status?: string;
+  error?: string;
+  time?: number[];
+  start_time?: number;
+  target_mode?: string;
+  target_idx?: number;
+  target_name?: string;
+
+  // Euler angles [deg] — Roll, Pitch, Yaw
+  euler_actual_r?: number[];
+  euler_actual_p?: number[];
+  euler_actual_y?: number[];
+  euler_cmd_r?: number[];
+  euler_cmd_p?: number[];
+  euler_cmd_y?: number[];
+  euler_error_r?: number[];
+  euler_error_p?: number[];
+  euler_error_y?: number[];
+
+  // Angular velocity [deg/s]
+  omega_x?: number[];
+  omega_y?: number[];
+  omega_z?: number[];
+
+  // Orbital state [km, km/s]
+  orbit_x?: number[];
+  orbit_y?: number[];
+  orbit_z?: number[];
+  vel_x?: number[];
+  vel_y?: number[];
+  vel_z?: number[];
+  altitude?: number[];
+
+  // Quaternions [q1, q2, q3, q4] (scalar-last)
+  q1?: number[];
+  q2?: number[];
+  q3?: number[];
+  q4?: number[];
+  qt1?: number[];
+  qt2?: number[];
+  qt3?: number[];
+  qt4?: number[];
+  qe1?: number[];
+  qe2?: number[];
+  qe3?: number[];
+  qe4?: number[];
+
+  // Torques [N·m]
+  torque_ctrl_x?: number[];
+  torque_ctrl_y?: number[];
+  torque_ctrl_z?: number[];
+  torque_gg_x?: number[];
+  torque_gg_y?: number[];
+  torque_gg_z?: number[];
+
+  // Spacecraft visualization (final state)
+  sc_dcm?: number[][];
+  sc_pos?: number[];
+
+  // Ground station overpass telemetry
+  gs_elevation?: number[];
+  gs_azimuth?: number[];
+  gs_range?: number[];
+  gs_lat?: number[];
+  gs_long?: number[];
+  gs_eci?: number[][];
+  gs_names?: string[];
+}
+
+
 // Propulsion Specific Types
 export type PropulsionData = Record<string, unknown>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type SimulationPayload = Record<string, any>;
+

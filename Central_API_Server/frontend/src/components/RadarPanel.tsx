@@ -599,7 +599,7 @@ export function RadarPanel() {
                     line: { color: '#32D74B', width: 2.5 },
                     name: 'Antenna Boresight Sweep'
                   };
-                  const targetBlipTraces = data?.ppi_blips?.map(b => ({
+                  const targetBlipTraces = data?.ppi_blips?.map((b: { id: number; r: number; theta: number }) => ({
                     r: [b.r],
                     theta: [b.theta],
                     mode: 'markers+text',

@@ -48,7 +48,8 @@ def setup_core_paths():
     paths = [
         os.path.join(root, "Radar_Systems", "build"),
         os.path.join(root, "Aerodynamics_CFD", "build"),
-        os.path.join(root, "Propulsion", "build")
+        os.path.join(root, "Propulsion", "build"),
+        os.path.join(root, "Spacecraft_SADC", "build")
     ]
     for p in paths:
         if os.path.exists(p) and p not in sys.path:
@@ -102,11 +103,19 @@ try:
 except ImportError:
     PROP_AVAILABLE = False
 
+try:
+    import sadc_core
+    SADC_AVAILABLE = True
+except ImportError:
+    SADC_AVAILABLE = False
+
 # Future microservice routers will be imported here
 from api_gateway.radar_router import router as radar_router, radar_process_command
 from api_gateway.prop_router import router as prop_router, prop_process_command
+from api_gateway.sadc_router import router as sadc_router, sadc_process_command
 app.include_router(radar_router, prefix="/api/radar")
 app.include_router(prop_router, prefix="/api/prop")
+app.include_router(sadc_router, prefix="/api/sadc")
 
 @app.get("/api/health")
 def health_check():
@@ -116,7 +125,8 @@ def health_check():
         "cores": {
             "radar": RADAR_AVAILABLE,
             "aero": AERO_AVAILABLE,
-            "prop": PROP_AVAILABLE
+            "prop": PROP_AVAILABLE,
+            "sadc": SADC_AVAILABLE
         }
     }
 
@@ -159,6 +169,8 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                 # Developer Signal Logging
                 if domain == "prop":
                     await manager.log(f"[CLIENT_SIGNAL] Domain: 'prop' | Command: '{command}' | Params: {list(data.get('data', {}).keys())}", websocket)
+                elif domain == "sadc":
+                    await manager.log(f"[CLIENT_SIGNAL] Domain: 'sadc' | Command: '{command}' | Params: {list(data.get('data', {}).keys())}", websocket)
                 elif domain == "aero":
                     await manager.log(f"[CLIENT_SIGNAL] Domain: 'aero' | Command: '{command}'", websocket)
                 elif domain == "radar":
@@ -584,6 +596,10 @@ async def websocket_endpoint(websocket: WebSocket, domain: str):
                 elif domain == "prop" and command == "optimize" and PROP_AVAILABLE:
                     prop_results = await prop_process_command(data, opt, manager=manager, websocket=websocket)
                     payload["data"].update(prop_results)
+
+                elif domain == "sadc":
+                    sadc_results = await sadc_process_command(data, manager=manager, websocket=websocket)
+                    payload["data"].update(sadc_results)
 
                 await manager.send_json(payload, websocket)
                 
